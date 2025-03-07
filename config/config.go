@@ -422,9 +422,8 @@ func GetEnvPrefix() string {
 // 文件扩展名转文件类型
 func getConfigType(filePath string) string {
 	ext := filepath.Ext(filePath)
-	if strings.HasPrefix(ext, ".") {
-		ext = ext[1:]
-	}
+
+	ext = strings.TrimPrefix(ext, ".")
 
 	if ext == "" {
 		// 如果没有扩展名，尝试根据文件名判断
