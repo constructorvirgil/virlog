@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/virlog/config"
 	"github.com/virlog/logger"
@@ -38,6 +40,43 @@ func main() {
 
 	// 应用日志中间件
 	loggedHandler := logger.HTTPMiddleware(log)(mux)
+
+	// 启动一个协程，每隔3秒请求一次服务接口
+	go func() {
+		// 等待服务器启动
+		time.Sleep(1 * time.Second)
+
+		endpoints := []string{
+			"http://localhost:8080/",
+			"http://localhost:8080/api/users",
+			"http://localhost:8080/api/error",
+		}
+
+		client := &http.Client{
+			Timeout: 5 * time.Second,
+		}
+
+		// 无限循环请求
+		for {
+			for _, endpoint := range endpoints {
+				// 请求服务接口
+				resp, err := client.Get(endpoint)
+				if err != nil {
+					fmt.Printf("请求 %s 失败: %v\n", endpoint, err)
+					continue
+				}
+
+				// 关闭响应体
+				resp.Body.Close()
+
+				// 等待1秒再发下一个请求
+				time.Sleep(1 * time.Second)
+			}
+
+			// 等待3秒再发起下一轮请求
+			time.Sleep(3 * time.Second)
+		}
+	}()
 
 	// 启动HTTP服务
 	logger.Info("HTTP服务启动", logger.String("addr", ":8080"))
