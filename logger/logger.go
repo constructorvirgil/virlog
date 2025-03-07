@@ -77,11 +77,11 @@ var _ Logger = (*zapLogger)(nil)
 
 // zapLogger 是对 zap.Logger 的封装
 type zapLogger struct {
-	zapLogger *zap.Logger
-	atom      *zap.AtomicLevel
-	config    *config.Config
-	fields    []Field
-	mu        sync.RWMutex
+	rawZapLogger *zap.Logger
+	atom         *zap.AtomicLevel
+	config       *config.Config
+	fields       []Field
+	mu           sync.RWMutex
 }
 
 // NewLogger 创建一个新的Logger实例
@@ -175,10 +175,10 @@ func NewLogger(cfg *config.Config) (Logger, error) {
 	logger := zap.New(core, getZapOptions(cfg)...).With(fields...)
 
 	return &zapLogger{
-		zapLogger: logger,
-		atom:      &atom,
-		config:    cfg,
-		fields:    make([]Field, 0),
+		rawZapLogger: logger,
+		atom:         &atom,
+		config:       cfg,
+		fields:       make([]Field, 0),
 	}, nil
 }
 
@@ -216,49 +216,49 @@ func getZapOptions(cfg *config.Config) []zap.Option {
 func (l *zapLogger) Debug(msg string, fields ...Field) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	l.zapLogger.Debug(msg, fields...)
+	l.rawZapLogger.Debug(msg, fields...)
 }
 
 // Info 输出Info级别日志
 func (l *zapLogger) Info(msg string, fields ...Field) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	l.zapLogger.Info(msg, fields...)
+	l.rawZapLogger.Info(msg, fields...)
 }
 
 // Warn 输出Warn级别日志
 func (l *zapLogger) Warn(msg string, fields ...Field) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	l.zapLogger.Warn(msg, fields...)
+	l.rawZapLogger.Warn(msg, fields...)
 }
 
 // Error 输出Error级别日志
 func (l *zapLogger) Error(msg string, fields ...Field) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	l.zapLogger.Error(msg, fields...)
+	l.rawZapLogger.Error(msg, fields...)
 }
 
 // DPanic 输出DPanic级别日志
 func (l *zapLogger) DPanic(msg string, fields ...Field) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	l.zapLogger.DPanic(msg, fields...)
+	l.rawZapLogger.DPanic(msg, fields...)
 }
 
 // Panic 输出Panic级别日志并触发panic
 func (l *zapLogger) Panic(msg string, fields ...Field) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	l.zapLogger.Panic(msg, fields...)
+	l.rawZapLogger.Panic(msg, fields...)
 }
 
 // Fatal 输出Fatal级别日志并调用os.Exit(1)
 func (l *zapLogger) Fatal(msg string, fields ...Field) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	l.zapLogger.Fatal(msg, fields...)
+	l.rawZapLogger.Fatal(msg, fields...)
 }
 
 // With 返回带有指定字段的新Logger
@@ -267,10 +267,10 @@ func (l *zapLogger) With(fields ...Field) Logger {
 	defer l.mu.Unlock()
 	allFields := append(l.fields, fields...)
 	return &zapLogger{
-		zapLogger: l.zapLogger.With(fields...),
-		atom:      l.atom,
-		config:    l.config,
-		fields:    allFields,
+		rawZapLogger: l.rawZapLogger.With(fields...),
+		atom:         l.atom,
+		config:       l.config,
+		fields:       allFields,
 	}
 }
 
@@ -281,12 +281,12 @@ func (l *zapLogger) SetLevel(level Level) {
 
 // Sync 将缓冲的日志刷新到输出
 func (l *zapLogger) Sync() error {
-	return l.zapLogger.Sync()
+	return l.rawZapLogger.Sync()
 }
 
 // GetZapLogger 返回原始zap.Logger
 func (l *zapLogger) GetZapLogger() *zap.Logger {
-	return l.zapLogger
+	return l.rawZapLogger
 }
 
 // 全局默认Logger实例

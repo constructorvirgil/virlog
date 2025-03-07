@@ -73,10 +73,10 @@ func newBufferLogger(level Level) (*zapLogger, *bytes.Buffer) {
 	zapLoggerInst := zap.New(core)
 
 	return &zapLogger{
-		zapLogger: zapLoggerInst,
-		atom:      &atom,
-		config:    config.DefaultConfig(),
-		fields:    make([]Field, 0),
+		rawZapLogger: zapLoggerInst,
+		atom:         &atom,
+		config:       config.DefaultConfig(),
+		fields:       make([]Field, 0),
 	}, buf
 }
 
