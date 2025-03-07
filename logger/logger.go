@@ -289,8 +289,10 @@ func (l *zapLogger) GetRawZapLogger() *zap.Logger {
 	return l.rawZapLogger
 }
 
-// 全局默认Logger实例
-var std Logger
+var (
+	std Logger
+	mu  sync.RWMutex
+)
 
 // init 初始化全局Logger
 func init() {
@@ -373,10 +375,14 @@ func SetLevel(level Level) {
 
 // SetDefault 设置默认Logger
 func SetDefault(logger Logger) {
+	mu.Lock()
+	defer mu.Unlock()
 	std = logger
 }
 
 // DefaultLogger 返回默认Logger
 func DefaultLogger() Logger {
+	mu.RLock()
+	defer mu.RUnlock()
 	return std
 }
