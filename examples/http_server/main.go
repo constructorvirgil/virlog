@@ -8,6 +8,7 @@ import (
 
 	"github.com/virlog/config"
 	"github.com/virlog/logger"
+	"github.com/virlog/logger/context"
 )
 
 func main() {
@@ -87,7 +88,7 @@ func main() {
 
 // 首页处理器
 func homeHandler(w http.ResponseWriter, r *http.Request) {
-	log := logger.GetLoggerFromContext(r.Context())
+	log := context.GetFromContext(r.Context())
 	log.Debug("处理首页请求")
 
 	w.Header().Set("Content-Type", "text/plain")
@@ -96,7 +97,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 
 // 用户API处理器
 func usersHandler(w http.ResponseWriter, r *http.Request) {
-	log := logger.GetLoggerFromContext(r.Context())
+	log := context.GetFromContext(r.Context())
 	log.Debug("处理用户API请求")
 
 	users := []map[string]interface{}{
@@ -112,7 +113,7 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 
 // 错误处理器
 func errorHandler(w http.ResponseWriter, r *http.Request) {
-	log := logger.GetLoggerFromContext(r.Context())
+	log := context.GetFromContext(r.Context())
 	log.Debug("处理错误演示API")
 
 	err := &apiError{
