@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -170,16 +171,34 @@ func TestSaveToFile(t *testing.T) {
 
 // 测试从环境变量加载配置
 func TestFromEnv(t *testing.T) {
-	// 设置环境变量
-	os.Setenv("LOG_LEVEL", "error")
-	os.Setenv("LOG_FORMAT", "console")
-	os.Setenv("LOG_OUTPUT", "file")
-	os.Setenv("LOG_DEVELOPMENT", "true")
-	os.Setenv("LOG_ENABLE_CALLER", "false")
-	os.Setenv("LOG_FILE_PATH", "/var/log/app.log")
+	// 重置全局变量，强制重新初始化
+	v = nil
+	globalConfig = nil
+	envPrefix = ""
+	listeners = nil
+	configFile = ""
+	initOnce = sync.Once{}
+
+	// 设置环境变量（使用默认前缀VIRLOG_）
+	os.Setenv("VIRLOG_LEVEL", "error")
+	os.Setenv("VIRLOG_FORMAT", "console")
+	os.Setenv("VIRLOG_OUTPUT", "file")
+	os.Setenv("VIRLOG_DEVELOPMENT", "true")
+	os.Setenv("VIRLOG_ENABLE_CALLER", "false")
+	os.Setenv("VIRLOG_FILE_PATH", "/var/log/app.log")
+
+	// 测试完成后清理环境变量
+	defer func() {
+		os.Unsetenv("VIRLOG_LEVEL")
+		os.Unsetenv("VIRLOG_FORMAT")
+		os.Unsetenv("VIRLOG_OUTPUT")
+		os.Unsetenv("VIRLOG_DEVELOPMENT")
+		os.Unsetenv("VIRLOG_ENABLE_CALLER")
+		os.Unsetenv("VIRLOG_FILE_PATH")
+	}()
 
 	// 从环境变量加载配置
-	config := FromEnv()
+	config := GetConfig()
 
 	// 验证配置
 	assert.Equal(t, "error", config.Level)
@@ -188,12 +207,4 @@ func TestFromEnv(t *testing.T) {
 	assert.True(t, config.Development)
 	assert.False(t, config.EnableCaller)
 	assert.Equal(t, "/var/log/app.log", config.FileConfig.Filename)
-
-	// 清理环境变量
-	os.Unsetenv("LOG_LEVEL")
-	os.Unsetenv("LOG_FORMAT")
-	os.Unsetenv("LOG_OUTPUT")
-	os.Unsetenv("LOG_DEVELOPMENT")
-	os.Unsetenv("LOG_ENABLE_CALLER")
-	os.Unsetenv("LOG_FILE_PATH")
 }

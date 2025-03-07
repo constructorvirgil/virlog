@@ -162,6 +162,10 @@ func loadConfigFile(filePath string) {
 	// 设置配置文件路径
 	v.SetConfigFile(filePath)
 
+	// 设置配置类型
+	configType := getConfigType(filePath)
+	v.SetConfigType(configType)
+
 	// 尝试读取配置文件
 	if err := v.ReadInConfig(); err != nil {
 		fmt.Printf("读取配置文件失败，使用默认配置: %v\n", err)
@@ -420,6 +424,17 @@ func getConfigType(filePath string) string {
 	ext := filepath.Ext(filePath)
 	if strings.HasPrefix(ext, ".") {
 		ext = ext[1:]
+	}
+
+	if ext == "" {
+		// 如果没有扩展名，尝试根据文件名判断
+		if strings.HasSuffix(filePath, "json") {
+			return "json"
+		} else if strings.HasSuffix(filePath, "yaml") || strings.HasSuffix(filePath, "yml") {
+			return "yaml"
+		}
+		// 默认使用json
+		return "json"
 	}
 
 	switch ext {
