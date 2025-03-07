@@ -172,10 +172,10 @@ func NewLogger(cfg *config.Config) (Logger, error) {
 	}
 
 	// 创建Logger
-	logger := zap.New(core, getZapOptions(cfg)...).With(fields...)
+	rawZapLogger := zap.New(core, getZapOptions(cfg)...).With(fields...)
 
 	return &zapLogger{
-		rawZapLogger: logger,
+		rawZapLogger: rawZapLogger,
 		atom:         &atom,
 		config:       cfg,
 		fields:       make([]Field, 0),
