@@ -73,8 +73,8 @@ func main() {
 				time.Sleep(1 * time.Second)
 			}
 
-			// 等待3秒再发起下一轮请求
-			time.Sleep(3 * time.Second)
+			// 等待5秒再发起下一轮请求
+			time.Sleep(5 * time.Second)
 		}
 	}()
 
