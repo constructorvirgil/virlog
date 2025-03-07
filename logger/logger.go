@@ -69,7 +69,7 @@ type Logger interface {
 	Sync() error
 
 	// 获取原始zap logger
-	GetZapLogger() *zap.Logger
+	GetRawZapLogger() *zap.Logger
 }
 
 // 确保 zapLogger 实现了 Logger 接口
@@ -285,7 +285,7 @@ func (l *zapLogger) Sync() error {
 }
 
 // GetZapLogger 返回原始zap.Logger
-func (l *zapLogger) GetZapLogger() *zap.Logger {
+func (l *zapLogger) GetRawZapLogger() *zap.Logger {
 	return l.rawZapLogger
 }
 
