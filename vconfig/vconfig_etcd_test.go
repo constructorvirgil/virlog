@@ -1,6 +1,7 @@
 package vconfig
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -15,6 +16,13 @@ func TestETCDConfig(t *testing.T) {
 	// 创建ETCD配置
 	etcdConfig := DefaultETCDConfig()
 	etcdConfig.Key = "/test/config"
+
+	// 清理ETCD中的配置
+	client, err := newETCDClient(etcdConfig)
+	require.NoError(t, err)
+	_, err = client.client.Delete(context.Background(), etcdConfig.Key)
+	require.NoError(t, err)
+	client.close()
 
 	// 创建默认配置
 	defaultConfig := newDefaultConfig()
@@ -50,6 +58,13 @@ func TestETCDConfigChangeCallback(t *testing.T) {
 	// 创建ETCD配置
 	etcdConfig := DefaultETCDConfig()
 	etcdConfig.Key = "/test/callback/config"
+
+	// 清理ETCD中的配置
+	client, err := newETCDClient(etcdConfig)
+	require.NoError(t, err)
+	_, err = client.client.Delete(context.Background(), etcdConfig.Key)
+	require.NoError(t, err)
+	client.close()
 
 	// 创建配置实例
 	cfg, err := NewConfig(newDefaultConfig(), WithETCDConfig[AppConfig](etcdConfig))
@@ -98,7 +113,7 @@ func TestETCDConfigChangeCallback(t *testing.T) {
 	assert.Equal(t, "debug", cfg.GetData().Log.Level)
 
 	// 从ETCD直接查询键值进行比较
-	client, err := newETCDClient(etcdConfig)
+	client, err = newETCDClient(etcdConfig)
 	require.NoError(t, err)
 	defer client.close()
 
@@ -124,6 +139,14 @@ func TestETCDAuth(t *testing.T) {
 	etcdConfig.Key = "/test/auth/config"
 	etcdConfig.Username = "test"
 	etcdConfig.Password = "test123"
+
+	// 清理ETCD中的配置
+	client, err := newETCDClient(etcdConfig)
+	if err == nil {
+		_, err = client.client.Delete(context.Background(), etcdConfig.Key)
+		require.NoError(t, err)
+		client.close()
+	}
 
 	// 创建配置实例
 	cfg, err := NewConfig(newDefaultConfig(),
@@ -168,6 +191,14 @@ func TestETCDTLS(t *testing.T) {
 		CertFile:      "test-cert.pem",
 		KeyFile:       "test-key.pem",
 		TrustedCAFile: "test-ca.pem",
+	}
+
+	// 清理ETCD中的配置
+	client, err := newETCDClient(etcdConfig)
+	if err == nil {
+		_, err = client.client.Delete(context.Background(), etcdConfig.Key)
+		require.NoError(t, err)
+		client.close()
 	}
 
 	// 创建配置实例
