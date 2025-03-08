@@ -308,8 +308,8 @@ log:
 	// 等待一段时间确保文件系统监控稳定
 	time.Sleep(1 * time.Second)
 
-	// 测试方式2：直接使用findChanges方法测试变更检测
-	t.Log("直接测试findChanges方法")
+	// 测试方式2：直接使用FindConfigChanges函数测试变更检测
+	t.Log("直接测试FindConfigChanges函数")
 
 	// 创建两个不同的配置对象
 	config1 := newDefaultConfig()
@@ -318,9 +318,9 @@ log:
 	config2.Server.Port = 9000
 	config2.Log.Level = "debug"
 
-	// 使用findChanges检测变更
-	changes := cfg.findChanges(config1, config2, "")
-	t.Logf("findChanges检测到 %d 个变更", len(changes))
+	// 使用FindConfigChanges检测变更
+	changes := findConfigChanges(config1, config2, "")
+	t.Logf("FindConfigChanges检测到 %d 个变更", len(changes))
 	for _, change := range changes {
 		t.Logf("变更: %s, 旧值: %v, 新值: %v", change.Path, change.OldValue, change.NewValue)
 	}
