@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -300,6 +301,41 @@ func (c *Config[T]) initWithFile() error {
 		// 配置文件存在，加载已有配置
 		if err := c.loadFromFile(); err != nil {
 			return err
+		}
+	}
+
+	// 应用环境变量覆盖
+	if c.enableEnv {
+		// 获取所有配置键
+		allKeys := c.v.AllKeys()
+		for _, key := range allKeys {
+			// 构造环境变量名
+			envKey := fmt.Sprintf("%s_%s", c.envPrefix, strings.ToUpper(strings.ReplaceAll(key, ".", "_")))
+			// 检查环境变量是否存在
+			if envVal := os.Getenv(envKey); envVal != "" {
+				// 根据配置值的类型进行转换
+				switch c.v.Get(key).(type) {
+				case int, int32, int64:
+					if val, err := strconv.ParseInt(envVal, 10, 64); err == nil {
+						c.v.Set(key, val)
+					}
+				case float32, float64:
+					if val, err := strconv.ParseFloat(envVal, 64); err == nil {
+						c.v.Set(key, val)
+					}
+				case bool:
+					if val, err := strconv.ParseBool(envVal); err == nil {
+						c.v.Set(key, val)
+					}
+				default:
+					c.v.Set(key, envVal)
+				}
+			}
+		}
+
+		// 将配置解析到结构体
+		if err := c.v.Unmarshal(&c.data); err != nil {
+			return fmt.Errorf("解析配置到结构体失败: %w", err)
 		}
 	}
 
