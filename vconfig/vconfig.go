@@ -122,6 +122,27 @@ func (c *Config[T]) findChanges(oldData, newData interface{}, path string) []Con
 		newVal = newVal.Elem()
 	}
 
+	// 处理nil值或无效值
+	if !oldVal.IsValid() && !newVal.IsValid() {
+		return changes // 两者都无效，无变化
+	}
+	if !oldVal.IsValid() {
+		// 旧值无效，新值有效，视为新增
+		return []ConfigChangedItem{{
+			Path:     path,
+			OldValue: nil,
+			NewValue: newData,
+		}}
+	}
+	if !newVal.IsValid() {
+		// 旧值有效，新值无效，视为删除
+		return []ConfigChangedItem{{
+			Path:     path,
+			OldValue: oldData,
+			NewValue: nil,
+		}}
+	}
+
 	// 如果类型不同，直接认为整个值都变了
 	if oldVal.Type() != newVal.Type() {
 		return []ConfigChangedItem{{
@@ -133,11 +154,21 @@ func (c *Config[T]) findChanges(oldData, newData interface{}, path string) []Con
 
 	switch oldVal.Kind() {
 	case reflect.Struct:
+		// 先比较整体是否相等
+		if reflect.DeepEqual(oldVal.Interface(), newVal.Interface()) {
+			return changes // 完全相等，无变化
+		}
+
 		// 遍历结构体的每个字段
 		for i := 0; i < oldVal.NumField(); i++ {
 			fieldName := oldVal.Type().Field(i).Name
 			oldField := oldVal.Field(i)
 			newField := newVal.Field(i)
+
+			// 如果字段不可比较，跳过
+			if !oldField.CanInterface() || !newField.CanInterface() {
+				continue
+			}
 
 			// 获取字段的tag名称（如果有）
 			tag := oldVal.Type().Field(i).Tag
@@ -160,11 +191,29 @@ func (c *Config[T]) findChanges(oldData, newData interface{}, path string) []Con
 			fullPath += fieldPath
 
 			// 递归比较字段值
-			fieldChanges := c.findChanges(oldField.Interface(), newField.Interface(), fullPath)
-			changes = append(changes, fieldChanges...)
+			if oldField.Kind() == reflect.Struct || oldField.Kind() == reflect.Map ||
+				oldField.Kind() == reflect.Slice || oldField.Kind() == reflect.Array {
+				// 复杂类型递归比较
+				fieldChanges := c.findChanges(oldField.Interface(), newField.Interface(), fullPath)
+				if len(fieldChanges) > 0 {
+					changes = append(changes, fieldChanges...)
+				}
+			} else if !reflect.DeepEqual(oldField.Interface(), newField.Interface()) {
+				// 基本类型直接比较
+				changes = append(changes, ConfigChangedItem{
+					Path:     fullPath,
+					OldValue: oldField.Interface(),
+					NewValue: newField.Interface(),
+				})
+			}
 		}
 
 	case reflect.Map:
+		// 先比较整体是否相等
+		if reflect.DeepEqual(oldVal.Interface(), newVal.Interface()) {
+			return changes // 完全相等，无变化
+		}
+
 		// 获取所有的键
 		allKeys := make(map[interface{}]bool)
 		for _, key := range oldVal.MapKeys() {
@@ -201,16 +250,70 @@ func (c *Config[T]) findChanges(oldData, newData interface{}, path string) []Con
 					OldValue: oldMapVal.Interface(),
 					NewValue: nil,
 				})
-			} else {
-				// 两边都有的键，比较值
+			} else if oldMapVal.Kind() == reflect.Map || oldMapVal.Kind() == reflect.Struct ||
+				oldMapVal.Kind() == reflect.Slice || oldMapVal.Kind() == reflect.Array {
+				// 复杂类型递归比较
 				fieldChanges := c.findChanges(oldMapVal.Interface(), newMapVal.Interface(), fullPath)
-				changes = append(changes, fieldChanges...)
+				if len(fieldChanges) > 0 {
+					changes = append(changes, fieldChanges...)
+				}
+			} else if !reflect.DeepEqual(oldMapVal.Interface(), newMapVal.Interface()) {
+				// 基本类型直接比较值
+				changes = append(changes, ConfigChangedItem{
+					Path:     fullPath,
+					OldValue: oldMapVal.Interface(),
+					NewValue: newMapVal.Interface(),
+				})
 			}
 		}
 
 	case reflect.Slice, reflect.Array:
-		// 数组/切片比较复杂，先简单处理为整体比较
-		if !reflect.DeepEqual(oldVal.Interface(), newVal.Interface()) {
+		// 先比较整体是否相等
+		if reflect.DeepEqual(oldVal.Interface(), newVal.Interface()) {
+			return changes // 完全相等，无变化
+		}
+
+		// 如果长度不同，直接认为整个数组/切片都变了
+		if oldVal.Len() != newVal.Len() {
+			changes = append(changes, ConfigChangedItem{
+				Path:     path,
+				OldValue: oldVal.Interface(),
+				NewValue: newVal.Interface(),
+			})
+			return changes
+		}
+
+		// 比较每个元素
+		for i := 0; i < oldVal.Len(); i++ {
+			oldItem := oldVal.Index(i)
+			newItem := newVal.Index(i)
+
+			// 如果元素不可比较，跳过
+			if !oldItem.CanInterface() || !newItem.CanInterface() {
+				continue
+			}
+
+			itemPath := fmt.Sprintf("%s[%d]", path, i)
+
+			if oldItem.Kind() == reflect.Map || oldItem.Kind() == reflect.Struct ||
+				oldItem.Kind() == reflect.Slice || oldItem.Kind() == reflect.Array {
+				// 复杂类型递归比较
+				itemChanges := c.findChanges(oldItem.Interface(), newItem.Interface(), itemPath)
+				if len(itemChanges) > 0 {
+					changes = append(changes, itemChanges...)
+				}
+			} else if !reflect.DeepEqual(oldItem.Interface(), newItem.Interface()) {
+				// 基本类型直接比较值
+				changes = append(changes, ConfigChangedItem{
+					Path:     itemPath,
+					OldValue: oldItem.Interface(),
+					NewValue: newItem.Interface(),
+				})
+			}
+		}
+
+		// 如果没有发现元素级别的变化，但整体不相等（可能是元素顺序变了），记录整体变化
+		if len(changes) == 0 && !reflect.DeepEqual(oldVal.Interface(), newVal.Interface()) {
 			changes = append(changes, ConfigChangedItem{
 				Path:     path,
 				OldValue: oldVal.Interface(),

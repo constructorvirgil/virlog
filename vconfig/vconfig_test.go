@@ -238,3 +238,106 @@ log:
 	assert.Equal(t, 7000, cfg.GetData().Server.Port)
 	assert.Equal(t, "debug", cfg.GetData().Log.Level)
 }
+
+// 测试配置变更检测
+func TestConfigChangeDetection(t *testing.T) {
+	// 创建测试配置文件
+	configFile := randomTempFilename("test_change_detection", ".yaml")
+	defer cleanTempFile(t, configFile)
+
+	// 创建配置实例
+	cfg, err := NewConfig(newDefaultConfig(), WithConfigFile[AppConfig](configFile))
+	require.NoError(t, err)
+
+	// 创建变更记录通道
+	changesCh := make(chan []ConfigChangedItem, 1)
+
+	// 添加回调
+	cfg.OnChange(func(e fsnotify.Event, changes []ConfigChangedItem) {
+		t.Logf("检测到 %d 个配置变更", len(changes))
+		for _, change := range changes {
+			t.Logf("变更: %s, 旧值: %v, 新值: %v", change.Path, change.OldValue, change.NewValue)
+		}
+		changesCh <- changes
+	})
+
+	// 场景1: 修改基本类型
+	newContent1 := `
+app:
+  name: "新应用名称"  # 修改基本类型
+  version: "1.0.0"
+server:
+  host: "localhost"
+  port: 8080
+database:
+  dsn: "postgres://user:password@localhost:5432/dbname"
+  max_conns: 10
+log:
+  level: "info"
+  format: "json"
+`
+	t.Log("写入第一个配置文件")
+	err = os.WriteFile(configFile, []byte(newContent1), 0644)
+	require.NoError(t, err)
+
+	// 等待变更通知
+	t.Log("等待第一个配置变更通知")
+	var changes1 []ConfigChangedItem
+	select {
+	case changes1 = <-changesCh:
+		t.Logf("收到第一个配置变更通知，包含 %d 个变更", len(changes1))
+	case <-time.After(5 * time.Second):
+		t.Fatal("等待配置变更通知超时1")
+	}
+
+	// 验证基本类型变更被正确检测
+	require.NotEmpty(t, changes1, "应该检测到至少一个变更")
+
+	// 确认app.name的变更
+	found := false
+	for _, change := range changes1 {
+		if change.Path == "app.name" {
+			found = true
+			assert.Equal(t, "示例应用", change.OldValue)
+			assert.Equal(t, "新应用名称", change.NewValue)
+			break
+		}
+	}
+	assert.True(t, found, "未检测到app.name的变更")
+
+	// 等待一段时间确保文件系统监控稳定
+	time.Sleep(1 * time.Second)
+
+	// 测试方式2：直接使用findChanges方法测试变更检测
+	t.Log("直接测试findChanges方法")
+
+	// 创建两个不同的配置对象
+	config1 := newDefaultConfig()
+	config2 := newDefaultConfig()
+	config2.App.Version = "2.0.0"
+	config2.Server.Port = 9000
+	config2.Log.Level = "debug"
+
+	// 使用findChanges检测变更
+	changes := cfg.findChanges(config1, config2, "")
+	t.Logf("findChanges检测到 %d 个变更", len(changes))
+	for _, change := range changes {
+		t.Logf("变更: %s, 旧值: %v, 新值: %v", change.Path, change.OldValue, change.NewValue)
+	}
+
+	// 验证变更检测
+	expectedPaths := map[string]struct{}{
+		"app.version": {},
+		"server.port": {},
+		"log.level":   {},
+	}
+
+	for _, change := range changes {
+		if _, ok := expectedPaths[change.Path]; ok {
+			delete(expectedPaths, change.Path)
+			t.Logf("找到预期的变更: %s", change.Path)
+		}
+	}
+
+	assert.Empty(t, expectedPaths, "有预期的变更未被检测到: %v", expectedPaths)
+}
