@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +68,10 @@ type Config[T any] struct {
 	closed bool
 	// 保护closed字段的互斥锁
 	closedMu sync.RWMutex
+	// ETCD配置
+	etcdConfig *ETCDConfig
+	// ETCD客户端
+	etcdClient *etcdClient
 }
 
 // OnChange 添加配置文件变更回调函数
@@ -221,112 +224,197 @@ func NewConfig[T any](defaultConfig T, options ...ConfigOption[T]) (*Config[T], 
 		option(config)
 	}
 
-	// 设置配置文件类型
-	config.v.SetConfigType(string(config.configType))
+	// 检查配置源
+	if config.configFile != "" && config.etcdConfig != nil {
+		return nil, fmt.Errorf("不能同时使用配置文件和ETCD")
+	}
 
-	// 如果配置了配置文件路径
+	if config.configFile == "" && config.etcdConfig == nil {
+		return nil, fmt.Errorf("必须指定配置文件或ETCD配置")
+	}
+
+	// 根据配置源初始化
 	if config.configFile != "" {
-		// 设置配置文件
-		configDir := filepath.Dir(config.configFile)
-		configName := filepath.Base(config.configFile)
-		// 去掉扩展名
-		ext := filepath.Ext(configName)
-		if ext != "" {
-			configName = configName[:len(configName)-len(ext)]
+		// 使用配置文件
+		if err := config.initWithFile(); err != nil {
+			return nil, err
 		}
-
-		// 如果配置文件目录不存在，创建目录
-		if _, err := os.Stat(configDir); os.IsNotExist(err) {
-			if err := os.MkdirAll(configDir, 0755); err != nil {
-				return nil, fmt.Errorf("创建配置目录失败: %w", err)
-			}
-		}
-
-		config.v.AddConfigPath(configDir)
-		config.v.SetConfigName(configName)
-
-		// 检查配置文件是否存在
-		configExists := true
-		if _, err := os.Stat(config.configFile); os.IsNotExist(err) {
-			configExists = false
-		}
-
-		// 首先将默认配置加载到viper中
-		// 使用viper提供的支持结构体到map的转换方法
-		if err := config.bindStruct(defaultConfig); err != nil {
-			return nil, fmt.Errorf("绑定默认配置失败: %w", err)
-		}
-
-		// 设置环境变量覆盖
-		if config.enableEnv {
-			config.v.SetEnvPrefix(config.envPrefix)
-			config.v.AutomaticEnv()
-			// 支持嵌套结构体的环境变量，如APP_SERVER_PORT
-			config.v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-		}
-
-		// 如果配置文件不存在，则创建
-		if !configExists {
-			// 保存配置到文件
-			if err := config.v.WriteConfigAs(config.configFile); err != nil {
-				return nil, fmt.Errorf("创建默认配置文件失败: %w", err)
-			}
-		} else {
-			// 配置文件存在，加载已有配置
-			fileBytes, err := os.ReadFile(config.configFile)
-			if err != nil {
-				return nil, fmt.Errorf("读取配置文件失败: %w", err)
-			}
-
-			// 创建临时viper实例读取配置文件
-			tempViper := viper.New()
-			tempViper.SetConfigType(string(config.configType))
-
-			// 从字节流读取配置
-			if err := tempViper.ReadConfig(bytes.NewBuffer(fileBytes)); err != nil {
-				return nil, fmt.Errorf("解析配置文件失败: %w", err)
-			}
-
-			// 将读取的配置应用到当前的viper实例
-			allSettings := tempViper.AllSettings()
-			for k, val := range allSettings {
-				config.v.Set(k, val)
-			}
-		}
-
-		// 如果启用了环境变量，应用环境变量覆盖
-		if config.enableEnv {
-			// 绑定所有键到环境变量
-			for _, key := range config.v.AllKeys() {
-				envKey := config.envPrefix + "_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
-				// 检查环境变量是否设置
-				if val := os.Getenv(envKey); val != "" {
-					// 根据值的类型设置
-					if val == "true" || val == "false" {
-						config.v.Set(key, val == "true")
-					} else if intVal, err := strconv.Atoi(val); err == nil {
-						config.v.Set(key, intVal)
-					} else if floatVal, err := strconv.ParseFloat(val, 64); err == nil {
-						config.v.Set(key, floatVal)
-					} else {
-						config.v.Set(key, val)
-					}
-				}
-			}
-		}
-
-		// 将配置解析到结构体
-		if err := config.v.Unmarshal(&config.data); err != nil {
-			return nil, fmt.Errorf("解析配置到结构体失败: %w", err)
-		}
-
-		// 监听配置文件变更
-		config.watchConfig()
 	} else {
-		return nil, errors.New("未指定配置文件路径")
+		// 使用ETCD
+		if err := config.initWithETCD(); err != nil {
+			return nil, err
+		}
 	}
 
 	return config, nil
+}
+
+// initWithFile 使用配置文件初始化
+func (c *Config[T]) initWithFile() error {
+	// 设置配置文件类型
+	c.v.SetConfigType(string(c.configType))
+
+	// 设置配置文件
+	configDir := filepath.Dir(c.configFile)
+	configName := filepath.Base(c.configFile)
+	// 去掉扩展名
+	ext := filepath.Ext(configName)
+	if ext != "" {
+		configName = configName[:len(configName)-len(ext)]
+	}
+
+	// 如果配置文件目录不存在，创建目录
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			return fmt.Errorf("创建配置目录失败: %w", err)
+		}
+	}
+
+	c.v.AddConfigPath(configDir)
+	c.v.SetConfigName(configName)
+
+	// 检查配置文件是否存在
+	configExists := true
+	if _, err := os.Stat(c.configFile); os.IsNotExist(err) {
+		configExists = false
+	}
+
+	// 首先将默认配置加载到viper中
+	if err := c.bindStruct(c.data); err != nil {
+		return fmt.Errorf("绑定默认配置失败: %w", err)
+	}
+
+	// 设置环境变量覆盖
+	if c.enableEnv {
+		c.v.SetEnvPrefix(c.envPrefix)
+		c.v.AutomaticEnv()
+		c.v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	}
+
+	// 如果配置文件不存在，则创建
+	if !configExists {
+		if err := c.v.WriteConfigAs(c.configFile); err != nil {
+			return fmt.Errorf("创建默认配置文件失败: %w", err)
+		}
+	} else {
+		// 配置文件存在，加载已有配置
+		if err := c.loadFromFile(); err != nil {
+			return err
+		}
+	}
+
+	// 监听配置文件变更
+	c.watchConfig()
+
+	return nil
+}
+
+// initWithETCD 使用ETCD初始化
+func (c *Config[T]) initWithETCD() error {
+	// 创建ETCD客户端
+	client, err := newETCDClient(c.etcdConfig)
+	if err != nil {
+		return fmt.Errorf("创建ETCD客户端失败: %w", err)
+	}
+	c.etcdClient = client
+
+	// 从ETCD加载配置
+	if err := loadConfigFromETCD(c.etcdClient, &c.data); err != nil {
+		return fmt.Errorf("从ETCD加载配置失败: %w", err)
+	}
+
+	// 如果ETCD中没有配置，保存默认配置
+	emptyJSON, _ := json.Marshal(*new(T))
+	currentJSON, _ := json.Marshal(c.data)
+	if string(currentJSON) == string(emptyJSON) {
+		c.data = c.oldData
+		if err := saveConfigToETCD(c.etcdClient, c.data); err != nil {
+			return fmt.Errorf("保存默认配置到ETCD失败: %w", err)
+		}
+	}
+
+	// 监听ETCD配置变更
+	c.watchETCD()
+
+	return nil
+}
+
+// watchETCD 监听ETCD配置变更
+func (c *Config[T]) watchETCD() {
+	c.etcdClient.watch(func(data []byte) {
+		// 检查配置是否已关闭
+		c.closedMu.RLock()
+		if c.closed {
+			c.closedMu.RUnlock()
+			return
+		}
+		c.closedMu.RUnlock()
+
+		now := time.Now()
+		// 防抖：如果与上次修改时间间隔小于设定的防抖时间，则忽略
+		if now.Sub(c.lastModTime) < c.debounceTime {
+			return
+		}
+		c.lastModTime = now
+
+		// 保存旧配置
+		c.oldData = cloneConfig(c.data)
+
+		// 解析新配置
+		var newData T
+		if err := json.Unmarshal(data, &newData); err != nil {
+			fmt.Printf("解析ETCD配置失败: %v\n", err)
+			return
+		}
+
+		// 更新配置
+		c.data = newData
+
+		// 查找配置变更项
+		changedItems := findConfigChanges(c.oldData, c.data, "")
+
+		// 触发回调
+		c.callbackMu.RLock()
+		defer c.callbackMu.RUnlock()
+		for _, callback := range c.changeCallbacks {
+			if callback != nil {
+				callback(fsnotify.Event{
+					Name: c.etcdConfig.Key,
+					Op:   fsnotify.Write,
+				}, changedItems)
+			}
+		}
+	})
+}
+
+// loadFromFile 从文件加载配置
+func (c *Config[T]) loadFromFile() error {
+	fileBytes, err := os.ReadFile(c.configFile)
+	if err != nil {
+		return fmt.Errorf("读取配置文件失败: %w", err)
+	}
+
+	// 创建临时viper实例读取配置
+	tempViper := viper.New()
+	tempViper.SetConfigType(string(c.configType))
+
+	// 从字节流读取配置
+	if err := tempViper.ReadConfig(bytes.NewBuffer(fileBytes)); err != nil {
+		return fmt.Errorf("解析配置文件失败: %w", err)
+	}
+
+	// 将读取的配置应用到当前的viper实例
+	allSettings := tempViper.AllSettings()
+	for k, val := range allSettings {
+		c.v.Set(k, val)
+	}
+
+	// 将配置解析到结构体
+	if err := c.v.Unmarshal(&c.data); err != nil {
+		return fmt.Errorf("解析配置到结构体失败: %w", err)
+	}
+
+	return nil
 }
 
 // bindStruct 将结构体绑定到配置
@@ -388,7 +476,15 @@ func (c *Config[T]) Update(data T) error {
 
 	// 更新配置
 	c.data = data
-	return c.SaveConfig()
+
+	// 根据配置源保存
+	if c.configFile != "" {
+		return c.SaveConfig()
+	} else if c.etcdClient != nil {
+		return saveConfigToETCD(c.etcdClient, data)
+	}
+
+	return fmt.Errorf("未指定配置源")
 }
 
 // Close 关闭配置，停止监听并释放资源
@@ -403,10 +499,11 @@ func (c *Config[T]) Close() {
 	c.changeCallbacks = nil
 	c.callbackMu.Unlock()
 
-	// viper 没有提供直接停止监听的方法
-	// 但我们可以通过清空回调函数列表来确保不再触发回调函数
-	// 实际上 viper 的监听是通过 fsnotify 来实现的，会一直运行直到程序结束
-	// 所以这里只能确保不再触发我们的回调函数
+	// 关闭ETCD客户端
+	if c.etcdClient != nil {
+		c.etcdClient.close()
+		c.etcdClient = nil
+	}
 
 	// 释放其他资源
 	c.v = nil
