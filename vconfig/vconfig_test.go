@@ -1,6 +1,7 @@
 package vconfig
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -331,6 +332,9 @@ func TestETCDConfigChangeCallback(t *testing.T) {
 	require.NoError(t, err)
 	defer cfg.Close()
 
+	err = cfg.Update(newDefaultConfig())
+	require.NoError(t, err)
+
 	// 标记是否回调被触发
 	callbackTriggered := false
 	callbackCh := make(chan bool)
@@ -373,6 +377,25 @@ func TestETCDConfigChangeCallback(t *testing.T) {
 	assert.Equal(t, "修改后的应用名称", cfg.GetData().App.Name)
 	assert.Equal(t, 7000, cfg.GetData().Server.Port)
 	assert.Equal(t, "debug", cfg.GetData().Log.Level)
+
+	// 从ETCD直接查询键值进行比较
+	client, err := newETCDClient(etcdConfig)
+	require.NoError(t, err)
+	defer client.close()
+
+	// 获取ETCD中的配置数据
+	data, err := client.get()
+	require.NoError(t, err)
+
+	// 解析ETCD中的配置
+	var remoteETCDConfig AppConfig
+	err = json.Unmarshal(data, &remoteETCDConfig)
+	require.NoError(t, err)
+
+	// 验证ETCD中的配置与内存中的配置一致
+	assert.Equal(t, "修改后的应用名称", remoteETCDConfig.App.Name)
+	assert.Equal(t, 7000, remoteETCDConfig.Server.Port)
+	assert.Equal(t, "debug", remoteETCDConfig.Log.Level)
 }
 
 // 测试ETCD认证
