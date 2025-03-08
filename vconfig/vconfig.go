@@ -350,13 +350,6 @@ func (c *Config[T]) watchETCD() {
 		}
 		c.closedMu.RUnlock()
 
-		now := time.Now()
-		// 防抖：如果与上次修改时间间隔小于设定的防抖时间，则忽略
-		if now.Sub(c.lastModTime) < c.debounceTime {
-			return
-		}
-		c.lastModTime = now
-
 		// 保存旧配置
 		c.oldData = cloneConfig(c.data)
 
