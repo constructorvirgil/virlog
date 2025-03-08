@@ -66,6 +66,10 @@ type Config[T any] struct {
 	lastModTime time.Time
 	// 防抖时间
 	debounceTime time.Duration
+	// 是否已关闭
+	closed bool
+	// 保护closed字段的互斥锁
+	closedMu sync.RWMutex
 }
 
 // OnChange 添加配置文件变更回调函数
@@ -305,6 +309,14 @@ func (c *Config[T]) findChanges(oldData, newData interface{}, path string) []Con
 
 // 触发所有回调函数
 func (c *Config[T]) triggerCallbacks(e fsnotify.Event) {
+	// 检查配置是否已关闭
+	c.closedMu.RLock()
+	if c.closed {
+		c.closedMu.RUnlock()
+		return
+	}
+	c.closedMu.RUnlock()
+
 	now := time.Now()
 	// 防抖：如果与上次修改时间间隔小于设定的防抖时间，则忽略
 	if now.Sub(c.lastModTime) < c.debounceTime {
@@ -337,6 +349,14 @@ func cloneConfig[T any](src T) T {
 
 // 重新加载配置
 func (c *Config[T]) reload() error {
+	// 检查配置是否已关闭
+	c.closedMu.RLock()
+	if c.closed {
+		c.closedMu.RUnlock()
+		return errors.New("配置已关闭")
+	}
+	c.closedMu.RUnlock()
+
 	// 确保文件存在
 	if _, err := os.Stat(c.configFile); os.IsNotExist(err) {
 		return fmt.Errorf("配置文件不存在: %w", err)
@@ -392,6 +412,14 @@ func (c *Config[T]) reload() error {
 // 监听配置文件变更
 func (c *Config[T]) watchConfig() {
 	c.v.OnConfigChange(func(e fsnotify.Event) {
+		// 检查配置是否已关闭
+		c.closedMu.RLock()
+		if c.closed {
+			c.closedMu.RUnlock()
+			return
+		}
+		c.closedMu.RUnlock()
+
 		if e.Op == fsnotify.Write {
 			// 重新加载配置
 			err := c.reload()
@@ -590,4 +618,27 @@ func (c *Config[T]) Update(data T) error {
 	// 更新配置
 	c.data = data
 	return c.SaveConfig()
+}
+
+// Close 关闭配置，停止监听并释放资源
+func (c *Config[T]) Close() {
+	// 设置关闭标志
+	c.closedMu.Lock()
+	c.closed = true
+	c.closedMu.Unlock()
+
+	// 清空回调函数列表
+	c.callbackMu.Lock()
+	c.changeCallbacks = nil
+	c.callbackMu.Unlock()
+
+	// viper 没有提供直接停止监听的方法
+	// 但我们可以通过清空回调函数列表来确保不再触发回调函数
+	// 实际上 viper 的监听是通过 fsnotify 来实现的，会一直运行直到程序结束
+	// 所以这里只能确保不再触发我们的回调函数
+
+	// 释放其他资源
+	c.v = nil
+	c.data = *new(T)
+	c.oldData = *new(T)
 }
