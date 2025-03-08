@@ -3,8 +3,12 @@ package logger
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
+	"runtime"
 	"testing"
+
+	"os/exec"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -175,8 +179,11 @@ func TestLoggerSetLevel(t *testing.T) {
 // 测试文件输出
 func TestFileOutput(t *testing.T) {
 	// 创建临时文件名
-	tempFile := "temp_test.log"
-	defer os.Remove(tempFile)
+	tempFile := fmt.Sprintf("temp_test_%d.log", os.Getpid())
+	// 确保文件不存在
+	os.Remove(tempFile)
+	// 延时清理临时文件
+	defer cleanTempFile(t, tempFile)
 
 	// 配置文件输出
 	cfg := &config.Config{
@@ -234,4 +241,50 @@ func TestGlobalFunctions(t *testing.T) {
 
 	assert.Equal(t, "global info message", logData["msg"])
 	assert.Equal(t, "info", logData["level"])
+}
+
+// 延时清理临时文件
+func cleanTempFile(t *testing.T, tempFile string) {
+	// 先尝试直接删除
+	err := os.Remove(tempFile)
+	if err != nil {
+		// 进程属性设置
+		procAttr := &os.ProcAttr{
+			Files: []*os.File{nil, nil, nil}, // 标准输入、输出、错误均设置为nil
+			Dir:   "",                        // 使用当前目录
+		}
+
+		var executable string
+		var args []string
+
+		switch runtime.GOOS {
+		case "windows":
+			// Windows系统
+			executable, err = exec.LookPath("powershell.exe")
+			if err != nil {
+				t.Logf("Failed to find executable %s: %v", executable, err)
+				return
+			}
+			t.Logf("Executable: %s", executable)
+			// 使用Start-Sleep命令等待2秒后再删除
+			args = []string{"-Command", fmt.Sprintf("Start-Sleep -Seconds 2; Remove-Item -Path '%s' -Force", tempFile)}
+		case "darwin", "linux", "freebsd", "openbsd", "netbsd":
+			// Unix系统
+			executable = "/bin/sh"
+			// 使用sleep命令等待2秒后再删除
+			args = []string{"-c", fmt.Sprintf("sleep 2 && rm -f \"%s\"", tempFile)}
+		default:
+			t.Logf("Unsupported OS: %s", runtime.GOOS)
+			return
+		}
+
+		// 启动进程
+		_, err := os.StartProcess(executable, append([]string{executable}, args...), procAttr)
+		if err != nil {
+			t.Logf("Start process failed: %v", err)
+			return
+		}
+
+		t.Logf("File locked, scheduled for deletion by separate process")
+	}
 }
