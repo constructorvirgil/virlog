@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/virlog/config"
+	"github.com/virlog/context"
 	"github.com/virlog/logger"
-	"github.com/virlog/logger/context"
 )
 
 func main() {
