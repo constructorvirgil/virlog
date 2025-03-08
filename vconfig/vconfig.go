@@ -319,14 +319,13 @@ func (c *Config[T]) initWithETCD() error {
 	c.etcdClient = client
 
 	// 从ETCD加载配置
-	if err := loadConfigFromETCD(c.etcdClient, &c.data); err != nil {
+	exists, err := loadConfigFromETCD(c.etcdClient, &c.data)
+	if err != nil {
 		return fmt.Errorf("从ETCD加载配置失败: %w", err)
 	}
 
 	// 如果ETCD中没有配置，保存默认配置
-	emptyJSON, _ := json.Marshal(*new(T))
-	currentJSON, _ := json.Marshal(c.data)
-	if string(currentJSON) == string(emptyJSON) {
+	if !exists {
 		c.data = c.oldData
 		if err := saveConfigToETCD(c.etcdClient, c.data); err != nil {
 			return fmt.Errorf("保存默认配置到ETCD失败: %w", err)

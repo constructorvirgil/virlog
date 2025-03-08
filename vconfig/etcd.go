@@ -160,22 +160,22 @@ func saveConfigToETCD[T any](client *etcdClient, data T) error {
 }
 
 // loadConfigFromETCD 从ETCD加载配置
-func loadConfigFromETCD[T any](client *etcdClient, data *T) error {
+func loadConfigFromETCD[T any](client *etcdClient, data *T) (exists bool, err error) {
 	// 从ETCD获取配置
 	jsonData, err := client.get()
 	if err != nil {
-		return fmt.Errorf("从ETCD获取配置失败: %w", err)
+		return false, fmt.Errorf("从ETCD获取配置失败: %w", err)
 	}
 
 	// 如果配置不存在，返回nil
 	if jsonData == nil {
-		return nil
+		return false, nil
 	}
 
 	// 反序列化配置
 	if err := json.Unmarshal(jsonData, data); err != nil {
-		return fmt.Errorf("反序列化配置失败: %w", err)
+		return false, fmt.Errorf("反序列化配置失败: %w", err)
 	}
 
-	return nil
+	return true, nil
 }
