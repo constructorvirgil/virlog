@@ -244,9 +244,6 @@ func (c *Config[T]) triggerCallbacks(e fsnotify.Event) {
 	// 查找配置变更项
 	changedItems := c.findChanges(c.oldData, c.data, "")
 
-	// 更新旧配置数据
-	c.oldData = cloneConfig(c.data)
-
 	c.callbackMu.RLock()
 	defer c.callbackMu.RUnlock()
 	for _, callback := range c.changeCallbacks {
