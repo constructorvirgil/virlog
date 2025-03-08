@@ -2,6 +2,7 @@ package vconfig
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -134,11 +135,15 @@ func (e *etcdClient) watch(callback func([]byte)) {
 }
 
 // loadTLSConfig 加载TLS配置
-func loadTLSConfig(config *TLSConfig) (*clientv3.TLSInfo, error) {
-	return &clientv3.TLSInfo{
-		CertFile:      config.CertFile,
-		KeyFile:       config.KeyFile,
-		TrustedCAFile: config.TrustedCAFile,
+func loadTLSConfig(config *TLSConfig) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("加载证书失败: %w", err)
+	}
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
 	}, nil
 }
 
