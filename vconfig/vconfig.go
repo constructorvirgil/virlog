@@ -34,7 +34,7 @@ type OnConfigChangeCallback func(e fsnotify.Event)
 // Config 通用配置结构体
 type Config[T any] struct {
 	// 配置数据
-	Data T
+	data T
 	// viper实例
 	v *viper.Viper
 	// 配置文件路径
@@ -156,7 +156,7 @@ func (c *Config[T]) reload() error {
 	}
 
 	// 将配置解析到结构体
-	if err := c.v.Unmarshal(&c.Data); err != nil {
+	if err := c.v.Unmarshal(&c.data); err != nil {
 		return fmt.Errorf("解析配置到结构体失败: %w", err)
 	}
 
@@ -183,7 +183,7 @@ func (c *Config[T]) watchConfig() {
 // NewConfig 创建一个新的配置实例
 func NewConfig[T any](defaultConfig T, options ...ConfigOption[T]) (*Config[T], error) {
 	config := &Config[T]{
-		Data:         defaultConfig,
+		data:         defaultConfig,
 		v:            viper.New(),
 		configType:   YAML,                   // 默认YAML格式
 		debounceTime: 500 * time.Millisecond, // 默认防抖时间500ms
@@ -290,7 +290,7 @@ func NewConfig[T any](defaultConfig T, options ...ConfigOption[T]) (*Config[T], 
 		}
 
 		// 将配置解析到结构体
-		if err := config.v.Unmarshal(&config.Data); err != nil {
+		if err := config.v.Unmarshal(&config.data); err != nil {
 			return nil, fmt.Errorf("解析配置到结构体失败: %w", err)
 		}
 
@@ -333,7 +333,7 @@ func (c *Config[T]) bindStruct(data T) error {
 // SaveConfig 保存配置到文件
 func (c *Config[T]) SaveConfig() error {
 	// 先将当前结构体绑定到viper
-	if err := c.bindStruct(c.Data); err != nil {
+	if err := c.bindStruct(c.data); err != nil {
 		return fmt.Errorf("绑定结构体到配置失败: %w", err)
 	}
 
@@ -350,13 +350,13 @@ func (c *Config[T]) GetViper() *viper.Viper {
 	return c.v
 }
 
-// Get 获取配置数据
-func (c *Config[T]) Get() T {
-	return c.Data
+// GetData 获取配置数据
+func (c *Config[T]) GetData() T {
+	return c.data
 }
 
 // Update 更新配置数据并保存
 func (c *Config[T]) Update(data T) error {
-	c.Data = data
+	c.data = data
 	return c.SaveConfig()
 }

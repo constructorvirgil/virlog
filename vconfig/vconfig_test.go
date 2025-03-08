@@ -122,11 +122,11 @@ func TestBasicConfig(t *testing.T) {
 	require.NotNil(t, cfg)
 
 	// 验证默认配置已经写入文件并加载
-	assert.Equal(t, defaultConfig.App.Name, cfg.Data.App.Name)
-	assert.Equal(t, defaultConfig.Server.Port, cfg.Data.Server.Port)
+	assert.Equal(t, defaultConfig.App.Name, cfg.data.App.Name)
+	assert.Equal(t, defaultConfig.Server.Port, cfg.data.Server.Port)
 
 	// 修改配置
-	cfg.Data.Server.Port = 9000
+	cfg.data.Server.Port = 9000
 	err = cfg.SaveConfig()
 	require.NoError(t, err)
 
@@ -138,7 +138,7 @@ func TestBasicConfig(t *testing.T) {
 	// 重新创建配置实例
 	newCfg, err := NewConfig(AppConfig{}, WithConfigFile[AppConfig](configFile))
 	require.NoError(t, err)
-	assert.Equal(t, 9000, newCfg.Data.Server.Port)
+	assert.Equal(t, 9000, newCfg.data.Server.Port)
 }
 
 // 测试环境变量覆盖
@@ -162,8 +162,8 @@ func TestEnvVarOverride(t *testing.T) {
 	require.NoError(t, err)
 
 	// 验证环境变量覆盖了默认配置
-	t.Logf("期望端口值: %s, 实际端口值: %d", portValue, cfg.Data.Server.Port)
-	assert.Equal(t, 5000, cfg.Data.Server.Port)
+	t.Logf("期望端口值: %s, 实际端口值: %d", portValue, cfg.data.Server.Port)
+	assert.Equal(t, 5000, cfg.data.Server.Port)
 }
 
 // 测试配置变更回调
@@ -226,7 +226,7 @@ log:
 	assert.True(t, callbackTriggered)
 
 	// 验证配置已更新
-	assert.Equal(t, "修改后的应用名称", cfg.Data.App.Name)
-	assert.Equal(t, 7000, cfg.Data.Server.Port)
-	assert.Equal(t, "debug", cfg.Data.Log.Level)
+	assert.Equal(t, "修改后的应用名称", cfg.data.App.Name)
+	assert.Equal(t, 7000, cfg.data.Server.Port)
+	assert.Equal(t, "debug", cfg.data.Log.Level)
 }
