@@ -75,6 +75,17 @@ type Logger interface {
 // 确保 zapLogger 实现了 Logger 接口
 var _ Logger = (*zapLogger)(nil)
 
+// Option 定义logger选项的函数类型
+type Option func(*zapLogger)
+
+// WithSyncTarget 设置自定义的同步输出目标
+func WithSyncTarget(syncTarget zapcore.WriteSyncer) Option {
+	return func(l *zapLogger) {
+		// 将syncTarget应用到logger的配置中
+		l.syncTarget = syncTarget
+	}
+}
+
 // zapLogger 是对 zap.Logger 的封装
 type zapLogger struct {
 	rawZapLogger *zap.Logger
@@ -82,36 +93,33 @@ type zapLogger struct {
 	config       *config.Config
 	fields       []Field
 	mu           sync.RWMutex
+	syncTarget   zapcore.WriteSyncer // 自定义的同步输出目标
 }
 
-// NewLogger 创建一个新的Logger实例
-func NewLogger(cfg *config.Config) (Logger, error) {
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-
-	atom := zap.NewAtomicLevel()
-	// 设置日志级别
-	switch cfg.Level {
+// getZapLevel 将配置中的日志级别字符串转换为zap日志级别
+func getZapLevel(levelStr string) zapcore.Level {
+	switch levelStr {
 	case "debug":
-		atom.SetLevel(DebugLevel)
+		return DebugLevel
 	case "info":
-		atom.SetLevel(InfoLevel)
+		return InfoLevel
 	case "warn":
-		atom.SetLevel(WarnLevel)
+		return WarnLevel
 	case "error":
-		atom.SetLevel(ErrorLevel)
+		return ErrorLevel
 	case "dpanic":
-		atom.SetLevel(DPanicLevel)
+		return DPanicLevel
 	case "panic":
-		atom.SetLevel(PanicLevel)
+		return PanicLevel
 	case "fatal":
-		atom.SetLevel(FatalLevel)
+		return FatalLevel
 	default:
-		atom.SetLevel(InfoLevel)
+		return InfoLevel
 	}
+}
 
-	// 初始化核心配置
+// getEncoderConfig 获取编码器配置
+func getEncoderConfig(cfg *config.Config) zapcore.EncoderConfig {
 	encoderConfig := zapcore.EncoderConfig{
 		TimeKey:        "time",
 		LevelKey:       "level",
@@ -131,7 +139,19 @@ func NewLogger(cfg *config.Config) (Logger, error) {
 		encoderConfig.EncodeCaller = zapcore.FullCallerEncoder
 	}
 
-	// 配置输出
+	return encoderConfig
+}
+
+// getEncoder 获取日志编码器
+func getEncoder(encoderConfig zapcore.EncoderConfig, cfg *config.Config) zapcore.Encoder {
+	if cfg.Format == "console" {
+		return zapcore.NewConsoleEncoder(encoderConfig)
+	}
+	return zapcore.NewJSONEncoder(encoderConfig)
+}
+
+// getOutputConfig 获取输出配置
+func getOutputConfig(cfg *config.Config) (zapcore.WriteSyncer, error) {
 	var writeSyncer zapcore.WriteSyncer
 	switch cfg.Output {
 	case "stdout":
@@ -153,33 +173,81 @@ func NewLogger(cfg *config.Config) (Logger, error) {
 	default:
 		writeSyncer = zapcore.AddSync(os.Stdout)
 	}
+	return writeSyncer, nil
+}
 
-	// 配置编码器
-	var encoder zapcore.Encoder
-	if cfg.Format == "console" {
-		encoder = zapcore.NewConsoleEncoder(encoderConfig)
+// NewLogger 创建一个新的Logger实例
+func NewLogger(cfg *config.Config, opts ...Option) (Logger, error) {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+
+	// 默认level是DEBUG
+	atom := zap.NewAtomicLevelAt(getZapLevel(cfg.Level))
+
+	// 创建zapLogger实例
+	logger := &zapLogger{
+		atom:   &atom,
+		config: cfg,
+		fields: make([]Field, 0),
+	}
+
+	// 应用所有选项
+	for _, opt := range opts {
+		opt(logger)
+	}
+
+	// 获取encoder配置
+	encoderConfig := getEncoderConfig(cfg)
+
+	// 获取输出配置
+	var writeSyncer zapcore.WriteSyncer
+	var err error
+	if logger.syncTarget != nil {
+		// 如果设置了自定义同步目标，使用它
+		writeSyncer = logger.syncTarget
 	} else {
-		encoder = zapcore.NewJSONEncoder(encoderConfig)
+		// 否则使用默认配置
+		writeSyncer, err = getOutputConfig(cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// 创建Core
-	core := zapcore.NewCore(encoder, writeSyncer, atom)
-
-	// 添加默认字段
-	fields := make([]zap.Field, 0, len(cfg.DefaultFields))
+	// 从配置中读取预设字段
+	var fields []Field
 	for k, v := range cfg.DefaultFields {
-		fields = append(fields, zap.Any(k, v))
+		// 根据类型进行转换
+		switch val := v.(type) {
+		case string:
+			fields = append(fields, String(k, val))
+		case int:
+			fields = append(fields, Int(k, val))
+		case int64:
+			fields = append(fields, Int64(k, val))
+		case float64:
+			fields = append(fields, Float64(k, val))
+		case bool:
+			fields = append(fields, Bool(k, val))
+		default:
+			fields = append(fields, Any(k, val))
+		}
 	}
 
-	// 创建Logger
+	// 创建核心
+	core := zapcore.NewCore(
+		getEncoder(encoderConfig, cfg),
+		writeSyncer,
+		atom,
+	)
+
+	// 创建zap logger
 	rawZapLogger := zap.New(core, getZapOptions(cfg)...).With(fields...)
 
-	return &zapLogger{
-		rawZapLogger: rawZapLogger,
-		atom:         &atom,
-		config:       cfg,
-		fields:       make([]Field, 0),
-	}, nil
+	// 保存到zapLogger实例
+	logger.rawZapLogger = rawZapLogger
+
+	return logger, nil
 }
 
 // getZapOptions 返回zap配置选项
@@ -271,6 +339,7 @@ func (l *zapLogger) With(fields ...Field) Logger {
 		atom:         l.atom,
 		config:       l.config,
 		fields:       allFields,
+		syncTarget:   l.syncTarget,
 	}
 }
 
