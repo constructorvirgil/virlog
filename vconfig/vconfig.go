@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,13 +29,25 @@ const (
 	TOML ConfigType = "toml"
 )
 
+// ConfigChangedItem 配置变更项
+type ConfigChangedItem struct {
+	// 配置路径，使用点号分隔，如 "app.server.port"
+	Path string
+	// 旧值
+	OldValue interface{}
+	// 新值
+	NewValue interface{}
+}
+
 // 配置项变更回调函数类型
-type OnConfigChangeCallback func(e fsnotify.Event)
+type OnConfigChangeCallback func(e fsnotify.Event, changedItems []ConfigChangedItem)
 
 // Config 通用配置结构体
 type Config[T any] struct {
 	// 配置数据
 	data T
+	// 旧配置数据，用于比较变化
+	oldData T
 	// viper实例
 	v *viper.Viper
 	// 配置文件路径
@@ -94,6 +107,131 @@ func (c *Config[T]) OnChange(callback OnConfigChangeCallback) {
 	c.changeCallbacks = append(c.changeCallbacks, callback)
 }
 
+// 查找两个值之间的差异，返回变更的配置项列表
+func (c *Config[T]) findChanges(oldData, newData interface{}, path string) []ConfigChangedItem {
+	var changes []ConfigChangedItem
+
+	oldVal := reflect.ValueOf(oldData)
+	newVal := reflect.ValueOf(newData)
+
+	// 处理指针类型
+	if oldVal.Kind() == reflect.Ptr {
+		oldVal = oldVal.Elem()
+	}
+	if newVal.Kind() == reflect.Ptr {
+		newVal = newVal.Elem()
+	}
+
+	// 如果类型不同，直接认为整个值都变了
+	if oldVal.Type() != newVal.Type() {
+		return []ConfigChangedItem{{
+			Path:     path,
+			OldValue: oldData,
+			NewValue: newData,
+		}}
+	}
+
+	switch oldVal.Kind() {
+	case reflect.Struct:
+		// 遍历结构体的每个字段
+		for i := 0; i < oldVal.NumField(); i++ {
+			fieldName := oldVal.Type().Field(i).Name
+			oldField := oldVal.Field(i)
+			newField := newVal.Field(i)
+
+			// 获取字段的tag名称（如果有）
+			tag := oldVal.Type().Field(i).Tag
+			yamlTag := tag.Get("yaml")
+			jsonTag := tag.Get("json")
+			fieldPath := fieldName
+			if yamlTag != "" && yamlTag != "-" {
+				parts := strings.Split(yamlTag, ",")
+				fieldPath = parts[0]
+			} else if jsonTag != "" && jsonTag != "-" {
+				parts := strings.Split(jsonTag, ",")
+				fieldPath = parts[0]
+			}
+
+			// 组合完整路径
+			fullPath := path
+			if fullPath != "" {
+				fullPath += "."
+			}
+			fullPath += fieldPath
+
+			// 递归比较字段值
+			fieldChanges := c.findChanges(oldField.Interface(), newField.Interface(), fullPath)
+			changes = append(changes, fieldChanges...)
+		}
+
+	case reflect.Map:
+		// 获取所有的键
+		allKeys := make(map[interface{}]bool)
+		for _, key := range oldVal.MapKeys() {
+			allKeys[key.Interface()] = true
+		}
+		for _, key := range newVal.MapKeys() {
+			allKeys[key.Interface()] = true
+		}
+
+		// 比较每个键对应的值
+		for key := range allKeys {
+			keyVal := reflect.ValueOf(key)
+			oldMapVal := oldVal.MapIndex(keyVal)
+			newMapVal := newVal.MapIndex(keyVal)
+
+			keyStr := fmt.Sprintf("%v", key)
+			fullPath := path
+			if fullPath != "" {
+				fullPath += "."
+			}
+			fullPath += keyStr
+
+			if !oldMapVal.IsValid() {
+				// 新增的键
+				changes = append(changes, ConfigChangedItem{
+					Path:     fullPath,
+					OldValue: nil,
+					NewValue: newMapVal.Interface(),
+				})
+			} else if !newMapVal.IsValid() {
+				// 删除的键
+				changes = append(changes, ConfigChangedItem{
+					Path:     fullPath,
+					OldValue: oldMapVal.Interface(),
+					NewValue: nil,
+				})
+			} else {
+				// 两边都有的键，比较值
+				fieldChanges := c.findChanges(oldMapVal.Interface(), newMapVal.Interface(), fullPath)
+				changes = append(changes, fieldChanges...)
+			}
+		}
+
+	case reflect.Slice, reflect.Array:
+		// 数组/切片比较复杂，先简单处理为整体比较
+		if !reflect.DeepEqual(oldVal.Interface(), newVal.Interface()) {
+			changes = append(changes, ConfigChangedItem{
+				Path:     path,
+				OldValue: oldVal.Interface(),
+				NewValue: newVal.Interface(),
+			})
+		}
+
+	default:
+		// 基本类型，直接比较值
+		if !reflect.DeepEqual(oldVal.Interface(), newVal.Interface()) {
+			changes = append(changes, ConfigChangedItem{
+				Path:     path,
+				OldValue: oldVal.Interface(),
+				NewValue: newVal.Interface(),
+			})
+		}
+	}
+
+	return changes
+}
+
 // 触发所有回调函数
 func (c *Config[T]) triggerCallbacks(e fsnotify.Event) {
 	now := time.Now()
@@ -103,13 +241,30 @@ func (c *Config[T]) triggerCallbacks(e fsnotify.Event) {
 	}
 	c.lastModTime = now
 
+	// 查找配置变更项
+	changedItems := c.findChanges(c.oldData, c.data, "")
+
+	// 更新旧配置数据
+	c.oldData = cloneConfig(c.data)
+
 	c.callbackMu.RLock()
 	defer c.callbackMu.RUnlock()
 	for _, callback := range c.changeCallbacks {
 		if callback != nil {
-			callback(e)
+			callback(e, changedItems)
 		}
 	}
+}
+
+// 克隆配置数据
+func cloneConfig[T any](src T) T {
+	var dst T
+	data, err := json.Marshal(src)
+	if err != nil {
+		return dst
+	}
+	json.Unmarshal(data, &dst)
+	return dst
 }
 
 // 重新加载配置
@@ -118,6 +273,9 @@ func (c *Config[T]) reload() error {
 	if _, err := os.Stat(c.configFile); os.IsNotExist(err) {
 		return fmt.Errorf("配置文件不存在: %w", err)
 	}
+
+	// 在重载前保存当前配置用于比较
+	c.oldData = cloneConfig(c.data)
 
 	// 重新读取配置文件内容
 	fileBytes, err := os.ReadFile(c.configFile)
@@ -184,6 +342,7 @@ func (c *Config[T]) watchConfig() {
 func NewConfig[T any](defaultConfig T, options ...ConfigOption[T]) (*Config[T], error) {
 	config := &Config[T]{
 		data:         defaultConfig,
+		oldData:      cloneConfig(defaultConfig),
 		v:            viper.New(),
 		configType:   YAML,                   // 默认YAML格式
 		debounceTime: 500 * time.Millisecond, // 默认防抖时间500ms
@@ -357,6 +516,10 @@ func (c *Config[T]) GetData() T {
 
 // Update 更新配置数据并保存
 func (c *Config[T]) Update(data T) error {
+	// 保存旧配置用于比较
+	c.oldData = cloneConfig(c.data)
+
+	// 更新配置
 	c.data = data
 	return c.SaveConfig()
 }

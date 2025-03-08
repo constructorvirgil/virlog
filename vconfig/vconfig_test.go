@@ -122,12 +122,13 @@ func TestBasicConfig(t *testing.T) {
 	require.NotNil(t, cfg)
 
 	// 验证默认配置已经写入文件并加载
-	assert.Equal(t, defaultConfig.App.Name, cfg.data.App.Name)
-	assert.Equal(t, defaultConfig.Server.Port, cfg.data.Server.Port)
+	assert.Equal(t, defaultConfig.App.Name, cfg.GetData().App.Name)
+	assert.Equal(t, defaultConfig.Server.Port, cfg.GetData().Server.Port)
 
 	// 修改配置
-	cfg.data.Server.Port = 9000
-	err = cfg.SaveConfig()
+	currentData := cfg.GetData()
+	currentData.Server.Port = 9000
+	err = cfg.Update(currentData)
 	require.NoError(t, err)
 
 	// 读取修改后的文件内容
@@ -138,7 +139,7 @@ func TestBasicConfig(t *testing.T) {
 	// 重新创建配置实例
 	newCfg, err := NewConfig(AppConfig{}, WithConfigFile[AppConfig](configFile))
 	require.NoError(t, err)
-	assert.Equal(t, 9000, newCfg.data.Server.Port)
+	assert.Equal(t, 9000, newCfg.GetData().Server.Port)
 }
 
 // 测试环境变量覆盖
@@ -162,8 +163,8 @@ func TestEnvVarOverride(t *testing.T) {
 	require.NoError(t, err)
 
 	// 验证环境变量覆盖了默认配置
-	t.Logf("期望端口值: %s, 实际端口值: %d", portValue, cfg.data.Server.Port)
-	assert.Equal(t, 5000, cfg.data.Server.Port)
+	t.Logf("期望端口值: %s, 实际端口值: %d", portValue, cfg.GetData().Server.Port)
+	assert.Equal(t, 5000, cfg.GetData().Server.Port)
 }
 
 // 测试配置变更回调
@@ -188,9 +189,16 @@ func TestConfigChangeCallback(t *testing.T) {
 	callbackCh := make(chan bool)
 
 	// 添加回调函数
-	cfg.OnChange(func(e fsnotify.Event) {
+	cfg.OnChange(func(e fsnotify.Event, changedItems []ConfigChangedItem) {
 		callbackTriggered = true
 		t.Logf("配置发生变更: %s", e.Name)
+
+		// 打印变动的配置项
+		t.Logf("变更项数量: %d", len(changedItems))
+		for _, item := range changedItems {
+			t.Logf("变更项: %s, 旧值: %v, 新值: %v", item.Path, item.OldValue, item.NewValue)
+		}
+
 		callbackCh <- true
 	})
 
@@ -226,7 +234,7 @@ log:
 	assert.True(t, callbackTriggered)
 
 	// 验证配置已更新
-	assert.Equal(t, "修改后的应用名称", cfg.data.App.Name)
-	assert.Equal(t, 7000, cfg.data.Server.Port)
-	assert.Equal(t, "debug", cfg.data.Log.Level)
+	assert.Equal(t, "修改后的应用名称", cfg.GetData().App.Name)
+	assert.Equal(t, 7000, cfg.GetData().Server.Port)
+	assert.Equal(t, "debug", cfg.GetData().Log.Level)
 }
