@@ -66,13 +66,13 @@ func TestETCDConfigChangeCallback(t *testing.T) {
 	require.NoError(t, err)
 	client.close()
 
+	// 创建默认配置
+	defaultConfig := newDefaultConfig()
+
 	// 创建配置实例
-	cfg, err := NewConfig(newDefaultConfig(), WithETCDConfig[AppConfig](etcdConfig))
+	cfg, err := NewConfig(defaultConfig, WithETCDConfig[AppConfig](etcdConfig))
 	require.NoError(t, err)
 	defer cfg.Close()
-
-	err = cfg.Update(newDefaultConfig())
-	require.NoError(t, err)
 
 	// 标记是否回调被触发
 	callbackTriggered := false
