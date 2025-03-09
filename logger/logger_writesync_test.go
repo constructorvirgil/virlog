@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/constructorvirgil/virlog/config"
 	"github.com/stretchr/testify/assert"
-	"github.com/virlog/config"
 	"go.uber.org/zap/zapcore"
 )
 

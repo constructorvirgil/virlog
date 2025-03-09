@@ -3,7 +3,7 @@ package context
 import (
 	"context"
 
-	"github.com/virlog/logger"
+	"github.com/constructorvirgil/virlog/logger"
 )
 
 // 定义上下文key类型，用于从上下文提取日志字段

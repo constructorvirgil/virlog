@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/virlog/config"
-	"github.com/virlog/logger"
+	"github.com/constructorvirgil/virlog/config"
+	"github.com/constructorvirgil/virlog/logger"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/virlog/config"
+	"github.com/constructorvirgil/virlog/config"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"

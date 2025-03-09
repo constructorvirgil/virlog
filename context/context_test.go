@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/constructorvirgil/virlog/logger"
 	"github.com/stretchr/testify/assert"
-	"github.com/virlog/logger"
 )
 
 // 测试GetFromContext函数

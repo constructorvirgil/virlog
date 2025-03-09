@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/constructorvirgil/virlog/config"
+	logctx "github.com/constructorvirgil/virlog/context"
+	"github.com/constructorvirgil/virlog/logger"
 	"github.com/stretchr/testify/assert"
-	"github.com/virlog/config"
-	logctx "github.com/virlog/context"
-	"github.com/virlog/logger"
 	"go.uber.org/zap/zapcore"
 )
 

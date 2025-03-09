@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/virlog/config"
-	"github.com/virlog/context"
-	"github.com/virlog/logger"
+	"github.com/constructorvirgil/virlog/config"
+	"github.com/constructorvirgil/virlog/context"
+	"github.com/constructorvirgil/virlog/logger"
 )
 
 func main() {

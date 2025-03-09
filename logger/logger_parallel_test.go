@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/constructorvirgil/virlog/config"
 	"github.com/stretchr/testify/assert"
-	"github.com/virlog/config"
 )
 
 // TestParallelSetDefaultAndLogOperations 测试并发环境下设置默认logger和使用默认logger的操作

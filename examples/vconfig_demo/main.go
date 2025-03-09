@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/constructorvirgil/virlog/vconfig"
 	"github.com/fsnotify/fsnotify"
-	"github.com/virlog/vconfig"
 )
 
 // 应用配置结构体

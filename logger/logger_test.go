@@ -10,9 +10,9 @@ import (
 
 	"os/exec"
 
+	"github.com/constructorvirgil/virlog/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/virlog/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

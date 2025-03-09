@@ -39,7 +39,7 @@ type TLSConfig struct {
 // DefaultETCDConfig 返回默认的ETCD配置
 func DefaultETCDConfig() *ETCDConfig {
 	return &ETCDConfig{
-		Endpoints:   []string{"127.0.0.1:2379"},
+		Endpoints:   []string{"192.168.33.10:2379"},
 		DialTimeout: 5 * time.Second,
 		Key:         "/config/app",
 	}

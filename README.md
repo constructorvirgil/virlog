@@ -1,7 +1,7 @@
 # virlog
 
-[![GoDoc](https://godoc.org/github.com/virlog?status.svg)](https://godoc.org/github.com/virlog)
-[![Go Report Card](https://goreportcard.com/badge/github.com/virlog)](https://goreportcard.com/report/github.com/virlog)
+[![GoDoc](https://godoc.org/github.com/constructorvirgil/virlog?status.svg)](https://godoc.org/github.com/constructorvirgil/virlog)
+[![Go Report Card](https://goreportcard.com/badge/github.com/constructorvirgil/virlog)](https://goreportcard.com/report/github.com/constructorvirgil/virlog)
 
 virlog 是一个基于 [zap](https://github.com/uber-go/zap) 的高性能、可扩展的结构化日志库，提供开箱即用的日志功能，适用于各种 Go 应用程序。
 
@@ -23,7 +23,7 @@ virlog 是一个基于 [zap](https://github.com/uber-go/zap) 的高性能、可�
 ## 安装
 
 ```bash
-go get github.com/virlog
+go get github.com/constructorvirgil/virlog
 ```
 
 ## 快速开始
@@ -34,7 +34,7 @@ go get github.com/virlog
 package main
 
 import (
-	"github.com/virlog/logger"
+	"github.com/constructorvirgil/virlog/logger"
 )
 
 func main() {
@@ -79,8 +79,8 @@ package main
 import (
 	"os"
 
-	"github.com/virlog/config"
-	"github.com/virlog/logger"
+	"github.com/constructorvirgil/virlog/config"
+	"github.com/constructorvirgil/virlog/logger"
 )
 
 func main() {
@@ -150,7 +150,7 @@ package main
 import (
 	"net/http"
 
-	"github.com/virlog/logger"
+	"github.com/constructorvirgil/virlog/logger"
 )
 
 func main() {
