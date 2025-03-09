@@ -142,6 +142,26 @@ func TestConfigChangeCallback(t *testing.T) {
 			t.Logf("变更项: %s, 旧值: %v, 新值: %v", item.Path, item.OldValue, item.NewValue)
 		}
 
+		// 验证所有预期的变更都存在
+		expectedChanges := map[string]struct {
+			oldValue interface{}
+			newValue interface{}
+		}{
+			"app.name":    {"示例应用", "修改后的应用名称"},
+			"app.version": {"1.0.0", "1.0.1"},
+			"server.port": {8080, 7000},
+			"log.level":   {"info", "debug"},
+		}
+
+		assert.Equal(t, len(expectedChanges), len(changedItems), "变更项数量不匹配")
+
+		for _, item := range changedItems {
+			expected, ok := expectedChanges[item.Path]
+			assert.True(t, ok, "未预期的变更项: %s", item.Path)
+			assert.Equal(t, expected.oldValue, item.OldValue, "变更项 %s 的旧值不匹配", item.Path)
+			assert.Equal(t, expected.newValue, item.NewValue, "变更项 %s 的新值不匹配", item.Path)
+		}
+
 		callbackCh <- true
 	})
 
