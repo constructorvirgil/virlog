@@ -1,34 +1,37 @@
 package vconfig
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/virlog/test/testutils"
+	"gopkg.in/yaml.v3"
 )
 
 // 示例配置结构体
 type AppConfig struct {
 	App struct {
-		Name    string `json:"name" yaml:"name"`
-		Version string `json:"version" yaml:"version"`
-	} `json:"app" yaml:"app"`
+		Name    string `json:"name" yaml:"name" toml:"name"`
+		Version string `json:"version" yaml:"version" toml:"version"`
+	} `json:"app" yaml:"app" toml:"app"`
 	Server struct {
-		Host string `json:"host" yaml:"host"`
-		Port int    `json:"port" yaml:"port"`
-	} `json:"server" yaml:"server"`
+		Host string `json:"host" yaml:"host" toml:"host"`
+		Port int    `json:"port" yaml:"port" toml:"port"`
+	} `json:"server" yaml:"server" toml:"server"`
 	Database struct {
-		DSN      string `json:"dsn" yaml:"dsn"`
-		MaxConns int    `json:"max_conns" yaml:"max_conns"`
-	} `json:"database" yaml:"database"`
+		DSN      string `json:"dsn" yaml:"dsn" toml:"dsn"`
+		MaxConns int    `json:"max_conns" yaml:"max_conns" toml:"max_conns"`
+	} `json:"database" yaml:"database" toml:"database"`
 	Log struct {
-		Level  string `json:"level" yaml:"level"`
-		Format string `json:"format" yaml:"format"`
-	} `json:"log" yaml:"log"`
+		Level  string `json:"level" yaml:"level" toml:"level"`
+		Format string `json:"format" yaml:"format" toml:"format"`
+	} `json:"log" yaml:"log" toml:"log"`
 }
 
 // 创建默认配置
@@ -47,126 +50,131 @@ func newDefaultConfig() AppConfig {
 
 // 测试基本功能
 func TestBasicConfig(t *testing.T) {
-	// 创建测试配置文件，使用随机文件名
-	configFile := testutils.RandomTempFilename("test_config", ".yaml")
+	testCases := []struct {
+		name       string
+		configType ConfigType
+		extension  string
+	}{
+		{"YAML配置", YAML, ".yaml"},
+		{"JSON配置", JSON, ".json"},
+		{"TOML配置", TOML, ".toml"},
+	}
 
-	// 使用规定的清理方式清理测试文件
-	defer testutils.CleanTempFile(t, configFile)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 创建测试配置文件，使用随机文件名
+			configFile := testutils.RandomTempFilename("test_config", tc.extension)
 
-	// 创建默认配置
-	defaultConfig := newDefaultConfig()
+			// 使用规定的清理方式清理测试文件
+			defer testutils.CleanTempFile(t, configFile)
 
-	// 创建配置实例
-	cfg, err := NewConfig(defaultConfig,
-		WithConfigFile[AppConfig](configFile),
-		WithConfigType[AppConfig](YAML))
+			// 创建默认配置
+			defaultConfig := newDefaultConfig()
 
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
+			// 创建配置实例
+			cfg, err := NewConfig(defaultConfig,
+				WithConfigFile[AppConfig](configFile),
+				WithConfigType[AppConfig](tc.configType))
 
-	// 验证默认配置已经写入文件并加载
-	assert.Equal(t, defaultConfig.App.Name, cfg.GetData().App.Name)
-	assert.Equal(t, defaultConfig.Server.Port, cfg.GetData().Server.Port)
+			require.NoError(t, err)
+			require.NotNil(t, cfg)
 
-	// 修改配置
-	currentData := cfg.GetData()
-	currentData.Server.Port = 9000
-	err = cfg.Update(currentData)
-	require.NoError(t, err)
+			// 验证默认配置已经写入文件并加载
+			assert.Equal(t, defaultConfig.App.Name, cfg.GetData().App.Name)
+			assert.Equal(t, defaultConfig.Server.Port, cfg.GetData().Server.Port)
 
-	// 读取修改后的文件内容
-	content, err := os.ReadFile(configFile)
-	require.NoError(t, err)
-	t.Logf("修改后的配置文件内容: \n%s", string(content))
+			// 修改配置
+			currentData := cfg.GetData()
+			currentData.Server.Port = 9000
+			err = cfg.Update(currentData)
+			require.NoError(t, err)
 
-	// 重新创建配置实例
-	newCfg, err := NewConfig(AppConfig{}, WithConfigFile[AppConfig](configFile))
-	require.NoError(t, err)
-	assert.Equal(t, 9000, newCfg.GetData().Server.Port)
+			// 读取修改后的文件内容
+			content, err := os.ReadFile(configFile)
+			require.NoError(t, err)
+			t.Logf("修改后的配置文件内容: \n%s", string(content))
+
+			// 重新创建配置实例
+			newCfg, err := NewConfig(AppConfig{},
+				WithConfigFile[AppConfig](configFile),
+				WithConfigType[AppConfig](tc.configType))
+			require.NoError(t, err)
+			defer newCfg.Close()
+
+			// 根据不同的配置类型解析文件内容
+			var parsedConfig AppConfig
+			switch tc.configType {
+			case JSON:
+				err = json.Unmarshal(content, &parsedConfig)
+			case YAML:
+				err = yaml.Unmarshal(content, &parsedConfig)
+			case TOML:
+				err = toml.Unmarshal(content, &parsedConfig)
+			}
+			require.NoError(t, err)
+
+			// 验证解析后的配置与实际配置一致
+			assert.Equal(t, parsedConfig.Server.Port, newCfg.GetData().Server.Port)
+			assert.Equal(t, parsedConfig.App.Name, newCfg.GetData().App.Name)
+			assert.Equal(t, parsedConfig.Database.DSN, newCfg.GetData().Database.DSN)
+			assert.Equal(t, parsedConfig.Log.Level, newCfg.GetData().Log.Level)
+		})
+	}
 }
 
 // 测试环境变量覆盖
 func TestEnvVarOverride(t *testing.T) {
-	// 创建测试配置文件，使用随机文件名
-	configFile := testutils.RandomTempFilename("test_env_config", ".yaml")
+	testCases := []struct {
+		name       string
+		configType ConfigType
+		extension  string
+	}{
+		{"YAML配置", YAML, ".yaml"},
+		{"JSON配置", JSON, ".json"},
+		{"TOML配置", TOML, ".toml"},
+	}
 
-	// 使用规定的清理方式清理测试文件
-	defer testutils.CleanTempFile(t, configFile)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 创建测试配置文件，使用随机文件名
+			configFile := testutils.RandomTempFilename("test_env_config", tc.extension)
 
-	// 设置环境变量
-	const portValue = "5000"
-	os.Setenv("APP_SERVER_PORT", portValue)
-	defer os.Unsetenv("APP_SERVER_PORT")
+			// 使用规定的清理方式清理测试文件
+			defer testutils.CleanTempFile(t, configFile)
 
-	// 创建配置实例，使用环境变量前缀
-	cfg, err := NewConfig(newDefaultConfig(),
-		WithConfigFile[AppConfig](configFile),
-		WithEnvPrefix[AppConfig]("APP"))
+			// 设置环境变量
+			const portValue = "5000"
+			os.Setenv("APP_SERVER_PORT", portValue)
+			defer os.Unsetenv("APP_SERVER_PORT")
 
-	require.NoError(t, err)
+			// 创建配置实例，使用环境变量前缀
+			cfg, err := NewConfig(newDefaultConfig(),
+				WithConfigFile[AppConfig](configFile),
+				WithConfigType[AppConfig](tc.configType),
+				WithEnvPrefix[AppConfig]("APP"))
 
-	// 验证环境变量覆盖了默认配置
-	t.Logf("期望端口值: %s, 实际端口值: %d", portValue, cfg.GetData().Server.Port)
-	assert.Equal(t, 5000, cfg.GetData().Server.Port)
+			require.NoError(t, err)
+
+			// 验证环境变量覆盖了默认配置
+			t.Logf("期望端口值: %s, 实际端口值: %d", portValue, cfg.GetData().Server.Port)
+			assert.Equal(t, 5000, cfg.GetData().Server.Port)
+		})
+	}
 }
 
 // 测试配置变更回调
 func TestConfigChangeCallback(t *testing.T) {
-	// 创建测试配置文件，使用随机文件名
-	configFile := testutils.RandomTempFilename("test_callback_config", ".yaml")
-
-	// 使用规定的清理方式清理测试文件
-	defer testutils.CleanTempFile(t, configFile)
-
-	// 创建配置实例
-	cfg, err := NewConfig(newDefaultConfig(), WithConfigFile[AppConfig](configFile))
-	require.NoError(t, err)
-
-	// 确认初始配置已写入
-	initialContent, err := os.ReadFile(configFile)
-	require.NoError(t, err)
-	t.Logf("初始配置文件内容: \n%s", string(initialContent))
-
-	// 标记是否回调被触发
-	callbackTriggered := false
-	callbackCh := make(chan bool)
-
-	// 添加回调函数
-	cfg.OnChange(func(e fsnotify.Event, changedItems []ConfigChangedItem) {
-		callbackTriggered = true
-		t.Logf("配置发生变更: %s", e.Name)
-
-		// 打印变动的配置项
-		t.Logf("变更项数量: %d", len(changedItems))
-		for _, item := range changedItems {
-			t.Logf("变更项: %s, 旧值: %v, 新值: %v", item.Path, item.OldValue, item.NewValue)
-		}
-
-		// 验证所有预期的变更都存在
-		expectedChanges := map[string]struct {
-			oldValue interface{}
-			newValue interface{}
-		}{
-			"app.name":    {"示例应用", "修改后的应用名称"},
-			"app.version": {"1.0.0", "1.0.1"},
-			"server.port": {8080, 7000},
-			"log.level":   {"info", "debug"},
-		}
-
-		assert.Equal(t, len(expectedChanges), len(changedItems), "变更项数量不匹配")
-
-		for _, item := range changedItems {
-			expected, ok := expectedChanges[item.Path]
-			assert.True(t, ok, "未预期的变更项: %s", item.Path)
-			assert.Equal(t, expected.oldValue, item.OldValue, "变更项 %s 的旧值不匹配", item.Path)
-			assert.Equal(t, expected.newValue, item.NewValue, "变更项 %s 的新值不匹配", item.Path)
-		}
-
-		callbackCh <- true
-	})
-
-	// 准备新的配置内容
-	newContent := `
+	testCases := []struct {
+		name       string
+		configType ConfigType
+		extension  string
+		newContent string
+	}{
+		{
+			name:       "YAML配置",
+			configType: YAML,
+			extension:  ".yaml",
+			newContent: `
 app:
   name: "修改后的应用名称"
   version: "1.0.1"
@@ -179,27 +187,133 @@ database:
 log:
   level: "debug"
   format: "json"
-`
+`,
+		},
+		{
+			name:       "JSON配置",
+			configType: JSON,
+			extension:  ".json",
+			newContent: `{
+  "app": {
+    "name": "修改后的应用名称",
+    "version": "1.0.1"
+  },
+  "server": {
+    "host": "localhost",
+    "port": 7000
+  },
+  "database": {
+    "dsn": "postgres://user:password@localhost:5432/dbname",
+    "max_conns": 10
+  },
+  "log": {
+    "level": "debug",
+    "format": "json"
+  }
+}`,
+		},
+		{
+			name:       "TOML配置",
+			configType: TOML,
+			extension:  ".toml",
+			newContent: `
+[app]
+name = "修改后的应用名称"
+version = "1.0.1"
 
-	// 写入新的配置内容
-	err = os.WriteFile(configFile, []byte(newContent), 0644)
-	require.NoError(t, err)
+[server]
+host = "localhost"
+port = 7000
 
-	// 等待回调被触发或超时
-	select {
-	case <-callbackCh:
-		// 回调被触发
-	case <-time.After(3 * time.Second):
-		t.Fatal("等待配置变更回调超时")
+[database]
+dsn = "postgres://user:password@localhost:5432/dbname"
+max_conns = 10
+
+[log]
+level = "debug"
+format = "json"
+`,
+		},
 	}
 
-	// 验证回调被触发
-	assert.True(t, callbackTriggered)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 创建测试配置文件，使用随机文件名
+			configFile := testutils.RandomTempFilename("test_callback_config", tc.extension)
 
-	// 验证配置已更新
-	assert.Equal(t, "修改后的应用名称", cfg.GetData().App.Name)
-	assert.Equal(t, 7000, cfg.GetData().Server.Port)
-	assert.Equal(t, "debug", cfg.GetData().Log.Level)
+			// 使用规定的清理方式清理测试文件
+			defer testutils.CleanTempFile(t, configFile)
+
+			// 创建配置实例
+			cfg, err := NewConfig(newDefaultConfig(),
+				WithConfigFile[AppConfig](configFile),
+				WithConfigType[AppConfig](tc.configType))
+			require.NoError(t, err)
+
+			// 确认初始配置已写入
+			initialContent, err := os.ReadFile(configFile)
+			require.NoError(t, err)
+			t.Logf("初始配置文件内容: \n%s", string(initialContent))
+
+			// 标记是否回调被触发
+			callbackTriggered := false
+			callbackCh := make(chan bool)
+
+			// 添加回调函数
+			cfg.OnChange(func(e fsnotify.Event, changedItems []ConfigChangedItem) {
+				callbackTriggered = true
+				t.Logf("配置发生变更: %s", e.Name)
+
+				// 打印变动的配置项
+				t.Logf("变更项数量: %d", len(changedItems))
+				for _, item := range changedItems {
+					t.Logf("变更项: %s, 旧值: %v, 新值: %v", item.Path, item.OldValue, item.NewValue)
+				}
+
+				// 验证所有预期的变更都存在
+				expectedChanges := map[string]struct {
+					oldValue interface{}
+					newValue interface{}
+				}{
+					"app.name":    {"示例应用", "修改后的应用名称"},
+					"app.version": {"1.0.0", "1.0.1"},
+					"server.port": {8080, 7000},
+					"log.level":   {"info", "debug"},
+				}
+
+				assert.Equal(t, len(expectedChanges), len(changedItems), "变更项数量不匹配")
+
+				for _, item := range changedItems {
+					expected, ok := expectedChanges[item.Path]
+					assert.True(t, ok, "未预期的变更项: %s", item.Path)
+					assert.Equal(t, expected.oldValue, item.OldValue, "变更项 %s 的旧值不匹配", item.Path)
+					assert.Equal(t, expected.newValue, item.NewValue, "变更项 %s 的新值不匹配", item.Path)
+				}
+
+				callbackCh <- true
+			})
+
+			// 写入新的配置内容
+			err = os.WriteFile(configFile, []byte(tc.newContent), 0644)
+			require.NoError(t, err)
+
+			// 等待回调被触发或超时
+			select {
+			case <-callbackCh:
+				// 回调被触发
+			case <-time.After(3 * time.Second):
+				t.Fatal("等待配置变更回调超时")
+			}
+
+			// 验证回调被触发
+			assert.True(t, callbackTriggered)
+
+			// 验证配置已更新
+			assert.Equal(t, "修改后的应用名称", cfg.GetData().App.Name)
+			assert.Equal(t, 7000, cfg.GetData().Server.Port)
+			assert.Equal(t, "debug", cfg.GetData().Log.Level)
+		})
+	}
 }
 
 // 测试配置变更检测

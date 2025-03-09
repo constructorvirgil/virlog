@@ -12,8 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // ConfigType 支持的配置文件类型
@@ -186,27 +188,55 @@ func (c *Config[T]) reload() error {
 
 // 监听配置文件变更
 func (c *Config[T]) watchConfig() {
-	c.v.OnConfigChange(func(e fsnotify.Event) {
-		// 检查配置是否已关闭
-		c.closedMu.RLock()
-		if c.closed {
-			c.closedMu.RUnlock()
-			return
-		}
-		c.closedMu.RUnlock()
+	// 创建文件监听器
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		fmt.Printf("创建文件监听器失败: %v\n", err)
+		return
+	}
 
-		if e.Op == fsnotify.Write {
-			// 重新加载配置
-			err := c.reload()
-			if err != nil {
-				fmt.Printf("配置文件变更后重新加载失败: %v\n", err)
-				return
+	// 在后台运行监听
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Op&fsnotify.Write == fsnotify.Write {
+					// 检查配置是否已关闭
+					c.closedMu.RLock()
+					if c.closed {
+						c.closedMu.RUnlock()
+						return
+					}
+					c.closedMu.RUnlock()
+
+					// 等待文件写入完成
+					time.Sleep(100 * time.Millisecond)
+
+					// 重新加载配置
+					if err := c.loadFromFile(); err != nil {
+						fmt.Printf("配置文件变更后重新加载失败: %v\n", err)
+						continue
+					}
+
+					// 触发回调
+					c.triggerCallbacks(event)
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				fmt.Printf("文件监听错误: %v\n", err)
 			}
-			// 触发回调
-			c.triggerCallbacks(e)
 		}
-	})
-	c.v.WatchConfig()
+	}()
+
+	// 开始监听配置文件
+	if err := watcher.Add(c.configFile); err != nil {
+		fmt.Printf("添加文件监听失败: %v\n", err)
+	}
 }
 
 // NewConfig 创建一个新的配置实例
@@ -262,6 +292,20 @@ func (c *Config[T]) initWithFile() error {
 	ext := filepath.Ext(configName)
 	if ext != "" {
 		configName = configName[:len(configName)-len(ext)]
+		// 如果没有指定配置类型，根据扩展名推断
+		if c.configType == "" {
+			switch strings.ToLower(ext[1:]) {
+			case "json":
+				c.configType = JSON
+			case "yaml", "yml":
+				c.configType = YAML
+			case "toml":
+				c.configType = TOML
+			default:
+				return fmt.Errorf("不支持的配置文件类型: %s", ext)
+			}
+			c.v.SetConfigType(string(c.configType))
+		}
 	}
 
 	// 如果配置文件目录不存在，创建目录
@@ -286,25 +330,6 @@ func (c *Config[T]) initWithFile() error {
 	}
 
 	// 设置环境变量覆盖
-	if c.enableEnv {
-		c.v.SetEnvPrefix(c.envPrefix)
-		c.v.AutomaticEnv()
-		c.v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	}
-
-	// 如果配置文件不存在，则创建
-	if !configExists {
-		if err := c.v.WriteConfigAs(c.configFile); err != nil {
-			return fmt.Errorf("创建默认配置文件失败: %w", err)
-		}
-	} else {
-		// 配置文件存在，加载已有配置
-		if err := c.loadFromFile(); err != nil {
-			return err
-		}
-	}
-
-	// 应用环境变量覆盖
 	if c.enableEnv {
 		// 获取所有配置键
 		allKeys := c.v.AllKeys()
@@ -332,11 +357,23 @@ func (c *Config[T]) initWithFile() error {
 				}
 			}
 		}
+	}
 
-		// 将配置解析到结构体
-		if err := c.v.Unmarshal(&c.data); err != nil {
-			return fmt.Errorf("解析配置到结构体失败: %w", err)
+	// 如果配置文件不存在，则创建
+	if !configExists {
+		if err := c.v.WriteConfigAs(c.configFile); err != nil {
+			return fmt.Errorf("创建默认配置文件失败: %w", err)
 		}
+	} else {
+		// 配置文件存在，加载已有配置
+		if err := c.loadFromFile(); err != nil {
+			return err
+		}
+	}
+
+	// 将配置解析到结构体
+	if err := c.v.Unmarshal(&c.data); err != nil {
+		return fmt.Errorf("解析配置到结构体失败: %w", err)
 	}
 
 	// 监听配置文件变更
@@ -447,20 +484,36 @@ func (c *Config[T]) loadFromFile() error {
 
 // bindStruct 将结构体绑定到配置
 func (c *Config[T]) bindStruct(data T) error {
-	// 使用反射将结构体转换为map
-	// 我们可以利用 viper 的能力先将数据序列化为 JSON，然后再读取回来
-	jsonBytes, err := json.Marshal(data)
+	// 根据配置类型选择正确的序列化方式
+	var (
+		configBytes []byte
+		err         error
+	)
+
+	switch c.configType {
+	case YAML:
+		configBytes, err = yaml.Marshal(data)
+	case JSON:
+		configBytes, err = json.Marshal(data)
+	case TOML:
+		var buf bytes.Buffer
+		err = toml.NewEncoder(&buf).Encode(data)
+		configBytes = buf.Bytes()
+	default:
+		return fmt.Errorf("不支持的配置类型: %s", c.configType)
+	}
+
 	if err != nil {
-		return fmt.Errorf("序列化结构体失败: %w", err)
+		return fmt.Errorf("序列化配置失败: %w", err)
 	}
 
 	// 创建临时的 viper 实例
 	tempViper := viper.New()
-	tempViper.SetConfigType("json")
+	tempViper.SetConfigType(string(c.configType))
 
-	// 从 JSON 读取数据
-	if err := tempViper.ReadConfig(bytes.NewBuffer(jsonBytes)); err != nil {
-		return fmt.Errorf("将JSON读取到viper失败: %w", err)
+	// 从序列化数据读取
+	if err := tempViper.ReadConfig(bytes.NewBuffer(configBytes)); err != nil {
+		return fmt.Errorf("读取配置失败: %w", err)
 	}
 
 	// 获取所有设置并应用到主 viper 实例
@@ -479,8 +532,27 @@ func (c *Config[T]) SaveConfig() error {
 		return fmt.Errorf("绑定结构体到配置失败: %w", err)
 	}
 
-	// 保存到文件
-	if err := c.v.WriteConfigAs(c.configFile); err != nil {
+	// 根据配置类型选择正确的写入方式
+	var err error
+	switch c.configType {
+	case YAML:
+		err = c.v.WriteConfigAs(c.configFile)
+	case JSON:
+		jsonBytes, e := json.MarshalIndent(c.data, "", "  ")
+		if e != nil {
+			return fmt.Errorf("序列化JSON失败: %w", e)
+		}
+		err = os.WriteFile(c.configFile, jsonBytes, 0644)
+	case TOML:
+		// 使用专门的TOML编码器
+		var buf bytes.Buffer
+		err = toml.NewEncoder(&buf).Encode(c.data)
+		err = os.WriteFile(c.configFile, buf.Bytes(), 0644)
+	default:
+		err = fmt.Errorf("不支持的配置类型: %s", c.configType)
+	}
+
+	if err != nil {
 		return fmt.Errorf("写入配置文件失败: %w", err)
 	}
 
