@@ -438,8 +438,8 @@ func (c *Config[T]) watchETCD() {
 			err = yaml.Unmarshal(data, &newData)
 		case TOML:
 			err = toml.Unmarshal(data, &newData)
-		default: // 默认使用 JSON
-			err = json.Unmarshal(data, &newData)
+		default: // 默认使用 YAML
+			err = yaml.Unmarshal(data, &newData)
 		}
 
 		if err != nil {
