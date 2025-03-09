@@ -2,7 +2,6 @@ package vconfig
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/virlog/test/testutils"
+	"gopkg.in/yaml.v3"
 )
 
 // 测试ETCD基本功能
@@ -124,7 +124,7 @@ func TestETCDConfigChangeCallback(t *testing.T) {
 
 	// 解析ETCD中的配置
 	var remoteETCDConfig AppConfig
-	err = json.Unmarshal(data, &remoteETCDConfig)
+	err = yaml.Unmarshal(data, &remoteETCDConfig)
 	require.NoError(t, err)
 
 	// 验证ETCD中的配置与内存中的配置一致
