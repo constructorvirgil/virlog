@@ -1,13 +1,16 @@
 package vconfig
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"gopkg.in/yaml.v3"
 )
 
 // ETCDConfig ETCD配置
@@ -148,32 +151,58 @@ func loadTLSConfig(config *TLSConfig) (*tls.Config, error) {
 }
 
 // saveConfigToETCD 保存配置到ETCD
-func saveConfigToETCD[T any](client *etcdClient, data T) error {
-	// 将配置序列化为JSON
-	jsonData, err := json.Marshal(data)
+func saveConfigToETCD[T any](client *etcdClient, data T, configType ConfigType) error {
+	var (
+		configBytes []byte
+		err         error
+	)
+
+	// 根据配置类型选择序列化方式
+	switch configType {
+	case JSON:
+		configBytes, err = json.Marshal(data)
+	case YAML:
+		configBytes, err = yaml.Marshal(data)
+	case TOML:
+		var buf bytes.Buffer
+		err = toml.NewEncoder(&buf).Encode(data)
+		configBytes = buf.Bytes()
+	default: // 默认使用 JSON
+		configBytes, err = json.Marshal(data)
+	}
+
 	if err != nil {
 		return fmt.Errorf("序列化配置失败: %w", err)
 	}
 
 	// 保存到ETCD
-	return client.put(jsonData)
+	return client.put(configBytes)
 }
 
 // loadConfigFromETCD 从ETCD加载配置
-func loadConfigFromETCD[T any](client *etcdClient, data *T) (exists bool, err error) {
+func loadConfigFromETCD[T any](client *etcdClient, data *T, configType ConfigType) (exists bool, err error) {
 	// 从ETCD获取配置
-	jsonData, err := client.get()
+	configBytes, err := client.get()
 	if err != nil {
 		return false, fmt.Errorf("从ETCD获取配置失败: %w", err)
 	}
 
 	// 如果配置不存在，返回nil
-	if jsonData == nil {
+	if configBytes == nil {
 		return false, nil
 	}
 
-	// 反序列化配置
-	if err := json.Unmarshal(jsonData, data); err != nil {
+	// 根据配置类型选择反序列化方式
+	switch configType {
+	case YAML:
+		err = yaml.Unmarshal(configBytes, data)
+	case TOML:
+		err = toml.Unmarshal(configBytes, data)
+	default: // 默认使用 JSON
+		err = json.Unmarshal(configBytes, data)
+	}
+
+	if err != nil {
 		return false, fmt.Errorf("反序列化配置失败: %w", err)
 	}
 

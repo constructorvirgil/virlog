@@ -392,15 +392,15 @@ func (c *Config[T]) initWithETCD() error {
 	c.etcdClient = client
 
 	// 从ETCD加载配置
-	exists, err := loadConfigFromETCD(c.etcdClient, &c.data)
+	exists, err := loadConfigFromETCD(c.etcdClient, &c.data, c.configType)
 	if err != nil {
 		return fmt.Errorf("从ETCD加载配置失败: %w", err)
 	}
 
-	// 如果ETCD中没有配置，保存默认配置
+	// 如果配置不存在，则保存默认配置到ETCD
 	if !exists {
-		c.data = c.oldData
-		if err := saveConfigToETCD(c.etcdClient, c.data); err != nil {
+		err := saveConfigToETCD(c.etcdClient, c.data, c.configType)
+		if err != nil {
 			return fmt.Errorf("保存默认配置到ETCD失败: %w", err)
 		}
 	}
@@ -425,10 +425,25 @@ func (c *Config[T]) watchETCD() {
 		// 保存旧配置
 		c.oldData = cloneConfig(c.data)
 
-		// 解析新配置
-		var newData T
-		if err := json.Unmarshal(data, &newData); err != nil {
-			fmt.Printf("解析ETCD配置失败: %v\n", err)
+		// 根据配置类型解析新配置
+		var (
+			newData T
+			err     error
+		)
+
+		switch c.configType {
+		case JSON:
+			err = json.Unmarshal(data, &newData)
+		case YAML:
+			err = yaml.Unmarshal(data, &newData)
+		case TOML:
+			err = toml.Unmarshal(data, &newData)
+		default: // 默认使用 JSON
+			err = json.Unmarshal(data, &newData)
+		}
+
+		if err != nil {
+			fmt.Printf("解析ETCD配置失败: configType=%s, data=%v, err=%v\n", c.configType, string(data), err)
 			return
 		}
 
@@ -571,17 +586,11 @@ func (c *Config[T]) GetData() T {
 
 // Update 更新配置数据并保存
 func (c *Config[T]) Update(data T) error {
-	// 保存旧配置用于比较
-	c.oldData = cloneConfig(c.data)
-
-	// 更新配置
-	c.data = data
-
 	// 根据配置源保存
 	if c.configFile != "" {
 		return c.SaveConfig()
 	} else if c.etcdClient != nil {
-		return saveConfigToETCD(c.etcdClient, data)
+		return saveConfigToETCD(c.etcdClient, data, c.configType)
 	}
 
 	return fmt.Errorf("未指定配置源")
