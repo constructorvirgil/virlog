@@ -3,7 +3,6 @@ package vconfig
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -124,68 +123,6 @@ func cloneConfig[T any](src T) T {
 	}
 	json.Unmarshal(data, &dst)
 	return dst
-}
-
-// 重新加载配置
-func (c *Config[T]) reload() error {
-	// 检查配置是否已关闭
-	c.closedMu.RLock()
-	if c.closed {
-		c.closedMu.RUnlock()
-		return errors.New("配置已关闭")
-	}
-	c.closedMu.RUnlock()
-
-	// 确保文件存在
-	if _, err := os.Stat(c.configFile); os.IsNotExist(err) {
-		return fmt.Errorf("配置文件不存在: %w", err)
-	}
-
-	// 在重载前保存当前配置用于比较
-	c.oldData = cloneConfig(c.data)
-
-	// 重新读取配置文件内容
-	fileBytes, err := os.ReadFile(c.configFile)
-	if err != nil {
-		return fmt.Errorf("读取配置文件失败: %w", err)
-	}
-
-	// 创建新的viper实例读取配置
-	v := viper.New()
-	v.SetConfigType(string(c.configType))
-
-	// 从字节流读取配置
-	if err := v.ReadConfig(bytes.NewBuffer(fileBytes)); err != nil {
-		return fmt.Errorf("解析配置文件失败: %w", err)
-	}
-
-	// 应用环境变量配置
-	if c.enableEnv {
-		v.SetEnvPrefix(c.envPrefix)
-		v.AutomaticEnv()
-		v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-
-		// 绑定所有键到环境变量
-		for _, key := range v.AllKeys() {
-			bindKey := strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
-			if err := v.BindEnv(key, c.envPrefix+"_"+bindKey); err != nil {
-				return fmt.Errorf("绑定环境变量失败: %w", err)
-			}
-		}
-	}
-
-	// 将读取的配置应用到当前的viper实例
-	allSettings := v.AllSettings()
-	for k, val := range allSettings {
-		c.v.Set(k, val)
-	}
-
-	// 将配置解析到结构体
-	if err := c.v.Unmarshal(&c.data); err != nil {
-		return fmt.Errorf("解析配置到结构体失败: %w", err)
-	}
-
-	return nil
 }
 
 // 监听配置文件变更
