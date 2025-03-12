@@ -75,6 +75,8 @@ type Config[T any] struct {
 	etcdConfig *ETCDConfig
 	// ETCD客户端
 	etcdClient *etcdClient
+	// 是否仅使用环境变量
+	envOnly bool
 }
 
 // OnChange 添加配置文件变更回调函数
@@ -260,12 +262,17 @@ func NewConfig[T any](defaultConfig T, options ...ConfigOption[T]) (*Config[T], 
 		return nil, fmt.Errorf("不能同时使用配置文件和ETCD")
 	}
 
-	if config.configFile == "" && config.etcdConfig == nil {
-		return nil, fmt.Errorf("必须指定配置文件或ETCD配置")
+	if config.configFile == "" && config.etcdConfig == nil && !config.envOnly { //默认使用环境变量
+		config.envOnly = true
 	}
 
 	// 根据配置源初始化
-	if config.configFile != "" {
+	if config.envOnly {
+		// 仅使用环境变量
+		if err := config.initWithEnv(); err != nil {
+			return nil, err
+		}
+	} else if config.configFile != "" {
 		// 使用配置文件
 		if err := config.initWithFile(); err != nil {
 			return nil, err
@@ -591,6 +598,26 @@ func (c *Config[T]) Update(data T) error {
 		return c.SaveConfig()
 	} else if c.etcdClient != nil {
 		return saveConfigToETCD(c.etcdClient, data, c.configType)
+	} else if c.envOnly {
+		// 保存旧配置用于比较
+		c.oldData = cloneConfig(c.data)
+
+		// 更新内存中的配置数据
+		c.data = data
+
+		// 仅环境变量模式，只更新内存中的数据，不持久化
+		// 重新绑定结构体到viper
+		if err := c.bindStruct(c.data); err != nil {
+			return fmt.Errorf("绑定结构体到配置失败: %w", err)
+		}
+
+		// 触发配置变更回调
+		c.triggerCallbacks(fsnotify.Event{
+			Name: "env",
+			Op:   fsnotify.Write,
+		})
+
+		return nil
 	}
 
 	return fmt.Errorf("未指定配置源")
@@ -618,4 +645,59 @@ func (c *Config[T]) Close() {
 	c.v = nil
 	c.data = *new(T)
 	c.oldData = *new(T)
+}
+
+// initWithEnv 仅使用环境变量初始化
+func (c *Config[T]) initWithEnv() error {
+	// 设置配置文件类型（用于序列化/反序列化）
+	c.v.SetConfigType(string(c.configType))
+
+	// 先将默认配置加载到viper中
+	if err := c.bindStruct(c.data); err != nil {
+		return fmt.Errorf("绑定默认配置失败: %w", err)
+	}
+
+	// 激活环境变量支持
+	c.v.SetEnvPrefix(c.envPrefix)
+	c.v.AutomaticEnv()
+	c.v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// 绑定所有键到环境变量
+	allKeys := c.v.AllKeys()
+	for _, key := range allKeys {
+		// 构造环境变量名
+		envKey := fmt.Sprintf("%s_%s", c.envPrefix, strings.ToUpper(strings.ReplaceAll(key, ".", "_")))
+		// 绑定环境变量
+		if err := c.v.BindEnv(key, envKey); err != nil {
+			return fmt.Errorf("绑定环境变量失败: %w", err)
+		}
+
+		// 检查环境变量是否存在并设置
+		if envVal := os.Getenv(envKey); envVal != "" {
+			// 根据配置值的类型进行转换
+			switch c.v.Get(key).(type) {
+			case int, int32, int64:
+				if val, err := strconv.ParseInt(envVal, 10, 64); err == nil {
+					c.v.Set(key, val)
+				}
+			case float32, float64:
+				if val, err := strconv.ParseFloat(envVal, 64); err == nil {
+					c.v.Set(key, val)
+				}
+			case bool:
+				if val, err := strconv.ParseBool(envVal); err == nil {
+					c.v.Set(key, val)
+				}
+			default:
+				c.v.Set(key, envVal)
+			}
+		}
+	}
+
+	// 将配置解析到结构体
+	if err := c.v.Unmarshal(&c.data); err != nil {
+		return fmt.Errorf("解析配置到结构体失败: %w", err)
+	}
+
+	return nil
 }

@@ -87,3 +87,12 @@ func WithETCDTLS[T any](certFile, keyFile, caFile string) ConfigOption[T] {
 		}
 	}
 }
+
+// WithEnvOnly 仅使用环境变量配置，不需要配置文件或ETCD
+func WithEnvOnly[T any](prefix string) ConfigOption[T] {
+	return func(c *Config[T]) {
+		c.enableEnv = true
+		c.envPrefix = prefix
+		c.envOnly = true
+	}
+}

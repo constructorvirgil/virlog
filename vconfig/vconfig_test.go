@@ -418,3 +418,91 @@ log:
 
 	assert.Empty(t, expectedPaths, "有预期的变更未被检测到: %v", expectedPaths)
 }
+
+// TestEnvOnlyConfig 测试仅环境变量配置
+func TestEnvOnlyConfig(t *testing.T) {
+	// 定义测试用配置结构
+	type TestConfig struct {
+		App struct {
+			Name string `json:"name" yaml:"name"`
+			Port int    `json:"port" yaml:"port"`
+		} `json:"app" yaml:"app"`
+		Database struct {
+			Host     string `json:"host" yaml:"host"`
+			Port     int    `json:"port" yaml:"port"`
+			Username string `json:"username" yaml:"username"`
+			Password string `json:"password" yaml:"password"`
+		} `json:"database" yaml:"database"`
+	}
+
+	// 设置默认配置
+	defaultConfig := TestConfig{}
+	defaultConfig.App.Name = "TestApp"
+	defaultConfig.App.Port = 8080
+	defaultConfig.Database.Host = "localhost"
+	defaultConfig.Database.Port = 3306
+	defaultConfig.Database.Username = "root"
+	defaultConfig.Database.Password = "password"
+
+	// 设置环境变量
+	os.Setenv("TEST_APP_PORT", "9090")
+	os.Setenv("TEST_DATABASE_HOST", "db.example.com")
+	defer func() {
+		os.Unsetenv("TEST_APP_PORT")
+		os.Unsetenv("TEST_DATABASE_HOST")
+	}()
+
+	// 创建仅环境变量配置
+	cfg, err := NewConfig(defaultConfig, WithEnvOnly[TestConfig]("TEST"))
+	if err != nil {
+		t.Fatalf("创建配置失败: %v", err)
+	}
+	defer cfg.Close()
+
+	// 验证配置值
+	data := cfg.GetData()
+	if data.App.Name != "TestApp" {
+		t.Errorf("App.Name 应为 %s, 实际为 %s", "TestApp", data.App.Name)
+	}
+	if data.App.Port != 9090 {
+		t.Errorf("App.Port 应为 %d, 实际为 %d", 9090, data.App.Port)
+	}
+	if data.Database.Host != "db.example.com" {
+		t.Errorf("Database.Host 应为 %s, 实际为 %s", "db.example.com", data.Database.Host)
+	}
+
+	// 测试配置变更回调
+	callbackCalled := false
+	cfg.OnChange(func(e fsnotify.Event, items []ConfigChangedItem) {
+		callbackCalled = true
+		if len(items) != 1 {
+			t.Errorf("预期变更项数量为 1, 实际为 %d", len(items))
+		}
+		if items[0].Path != "database.port" {
+			t.Errorf("预期变更项路径为 %s, 实际为 %s", "database.port", items[0].Path)
+		}
+		if items[0].OldValue.(int) != 3306 {
+			t.Errorf("预期旧值为 %d, 实际为 %v", 3306, items[0].OldValue)
+		}
+		if items[0].NewValue.(int) != 5432 {
+			t.Errorf("预期新值为 %d, 实际为 %v", 5432, items[0].NewValue)
+		}
+	})
+
+	// 更新配置并检查回调是否被触发
+	newData := data
+	newData.Database.Port = 5432
+	if err := cfg.Update(newData); err != nil {
+		t.Fatalf("更新配置失败: %v", err)
+	}
+
+	if !callbackCalled {
+		t.Error("配置变更回调未被触发")
+	}
+
+	// 验证更新后的配置
+	updatedData := cfg.GetData()
+	if updatedData.Database.Port != 5432 {
+		t.Errorf("更新后 Database.Port 应为 %d, 实际为 %d", 5432, updatedData.Database.Port)
+	}
+}
