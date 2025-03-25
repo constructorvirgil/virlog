@@ -414,8 +414,8 @@ func (c *Config[T]) watchETCDs() {
 			// 更新配置
 			c.data = newData
 
-			// 查找配置变更项
-			changedItems := findConfigChanges(c.oldData, c.data, c.configFiles[i])
+			// 查找配置变更项，不包含ETCD Key前缀
+			changedItems := findConfigChanges(c.oldData, c.data, "")
 
 			// 触发回调
 			c.callbackMu.RLock()
