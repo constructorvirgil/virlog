@@ -4,13 +4,20 @@ import (
 	"time"
 )
 
-// ConfigOption 配置选项函数
+// ConfigOption 配置选项函数类型
 type ConfigOption[T any] func(*Config[T])
 
 // WithConfigFile 设置配置文件路径
 func WithConfigFile[T any](configFile string) ConfigOption[T] {
 	return func(c *Config[T]) {
-		c.configFile = configFile
+		c.configFiles = []string{configFile}
+	}
+}
+
+// WithConfigFiles 设置多个配置文件路径
+func WithConfigFiles[T any](configFiles []string) ConfigOption[T] {
+	return func(c *Config[T]) {
+		c.configFiles = configFiles
 	}
 }
 
@@ -21,18 +28,45 @@ func WithConfigType[T any](configType ConfigType) ConfigOption[T] {
 	}
 }
 
-// WithEnvPrefix 启用环境变量并设置前缀
+// WithEnv 启用环境变量支持
+func WithEnv[T any](enable bool) ConfigOption[T] {
+	return func(c *Config[T]) {
+		c.enableEnv = enable
+	}
+}
+
+// WithEnvPrefix 设置环境变量前缀
 func WithEnvPrefix[T any](prefix string) ConfigOption[T] {
 	return func(c *Config[T]) {
-		c.enableEnv = true
 		c.envPrefix = prefix
 	}
 }
 
-// WithDebounceTime 设置防抖时间
-func WithDebounceTime[T any](duration time.Duration) ConfigOption[T] {
+// WithETCD 设置ETCD配置
+func WithETCD[T any](etcdConfig *ETCDConfig) ConfigOption[T] {
 	return func(c *Config[T]) {
-		c.debounceTime = duration
+		c.etcdConfigs = []*ETCDConfig{etcdConfig}
+	}
+}
+
+// WithETCDs 设置多个ETCD配置
+func WithETCDs[T any](etcdConfigs []*ETCDConfig) ConfigOption[T] {
+	return func(c *Config[T]) {
+		c.etcdConfigs = etcdConfigs
+	}
+}
+
+// WithEnvOnly 设置是否仅使用环境变量
+func WithEnvOnly[T any](envOnly bool) ConfigOption[T] {
+	return func(c *Config[T]) {
+		c.envOnly = envOnly
+	}
+}
+
+// WithDebounceTime 设置防抖时间
+func WithDebounceTime[T any](debounceTime time.Duration) ConfigOption[T] {
+	return func(c *Config[T]) {
+		c.debounceTime = debounceTime
 	}
 }
 
@@ -85,14 +119,5 @@ func WithETCDTLS[T any](certFile, keyFile, caFile string) ConfigOption[T] {
 			KeyFile:       keyFile,
 			TrustedCAFile: caFile,
 		}
-	}
-}
-
-// WithEnvOnly 仅使用环境变量配置，不需要配置文件或ETCD
-func WithEnvOnly[T any](prefix string) ConfigOption[T] {
-	return func(c *Config[T]) {
-		c.enableEnv = true
-		c.envPrefix = prefix
-		c.envOnly = true
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -15,18 +16,16 @@ import (
 
 // ETCDConfig ETCD配置
 type ETCDConfig struct {
-	// ETCD连接地址列表
+	// ETCD服务器地址列表
 	Endpoints []string
-	// 连接超时时间
-	DialTimeout time.Duration
-	// 配置在ETCD中的key
-	Key string
 	// 用户名
 	Username string
 	// 密码
 	Password string
-	// TLS配置
-	TLS *TLSConfig
+	// 配置键
+	Key string
+	// 超时时间
+	Timeout time.Duration
 }
 
 // TLSConfig TLS配置
@@ -39,102 +38,153 @@ type TLSConfig struct {
 // DefaultETCDConfig 返回默认的ETCD配置
 func DefaultETCDConfig() *ETCDConfig {
 	return &ETCDConfig{
-		Endpoints:   []string{"127.0.0.1:2379"},
-		DialTimeout: 5 * time.Second,
-		Key:         "/config/app",
+		Endpoints: []string{"etcd-test:2379"},
+		Timeout:   5 * time.Second,
+		Key:       "/config/app",
 	}
 }
 
-// etcdClient ETCD客户端封装
+// etcdClient ETCD客户端
 type etcdClient struct {
+	// 客户端
 	client *clientv3.Client
-	config *ETCDConfig
-	ctx    context.Context
-	cancel context.CancelFunc
+	// 配置键
+	key string
+	// 是否已关闭
+	closed bool
+	// 保护closed字段的互斥锁
+	closedMu sync.RWMutex
 }
 
 // newETCDClient 创建ETCD客户端
 func newETCDClient(config *ETCDConfig) (*etcdClient, error) {
-	// 创建context
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// 构建ETCD客户端配置
-	clientConfig := clientv3.Config{
+	// 创建客户端
+	client, err := clientv3.New(clientv3.Config{
 		Endpoints:   config.Endpoints,
-		DialTimeout: config.DialTimeout,
 		Username:    config.Username,
 		Password:    config.Password,
-	}
-
-	// 如果配置了TLS
-	if config.TLS != nil {
-		tlsConfig, err := loadTLSConfig(config.TLS)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("加载TLS配置失败: %w", err)
-		}
-		clientConfig.TLS = tlsConfig
-	}
-
-	// 创建ETCD客户端
-	client, err := clientv3.New(clientConfig)
+		DialTimeout: config.Timeout,
+	})
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("创建ETCD客户端失败: %w", err)
 	}
 
 	return &etcdClient{
 		client: client,
-		config: config,
-		ctx:    ctx,
-		cancel: cancel,
+		key:    config.Key,
 	}, nil
 }
 
-// close 关闭ETCD客户端
-func (e *etcdClient) close() error {
-	e.cancel()
-	if e.client != nil {
-		return e.client.Close()
-	}
-	return nil
-}
-
-// get 从ETCD获取配置
-func (e *etcdClient) get() ([]byte, error) {
-	resp, err := e.client.Get(e.ctx, e.config.Key)
+// loadConfigFromETCD 从ETCD加载配置
+func loadConfigFromETCD(client *etcdClient, data interface{}, configType ConfigType) (bool, error) {
+	// 获取配置
+	resp, err := client.client.Get(context.Background(), client.key)
 	if err != nil {
-		return nil, fmt.Errorf("从ETCD获取配置失败: %w", err)
+		return false, fmt.Errorf("获取ETCD配置失败: %w", err)
 	}
 
+	// 如果配置不存在
 	if len(resp.Kvs) == 0 {
-		return nil, nil
+		return false, nil
 	}
 
-	return resp.Kvs[0].Value, nil
+	// 根据配置类型解析
+	switch configType {
+	case JSON:
+		if err := json.Unmarshal(resp.Kvs[0].Value, data); err != nil {
+			return false, fmt.Errorf("解析JSON配置失败: %w", err)
+		}
+	case YAML:
+		if err := yaml.Unmarshal(resp.Kvs[0].Value, data); err != nil {
+			return false, fmt.Errorf("解析YAML配置失败: %w", err)
+		}
+	case TOML:
+		if err := toml.Unmarshal(resp.Kvs[0].Value, data); err != nil {
+			return false, fmt.Errorf("解析TOML配置失败: %w", err)
+		}
+	default:
+		return false, fmt.Errorf("不支持的配置类型: %s", configType)
+	}
+
+	return true, nil
 }
 
-// put 将配置保存到ETCD
-func (e *etcdClient) put(data []byte) error {
-	_, err := e.client.Put(e.ctx, e.config.Key, string(data))
-	if err != nil {
-		return fmt.Errorf("保存配置到ETCD失败: %w", err)
+// saveConfigToETCD 保存配置到ETCD
+func saveConfigToETCD(client *etcdClient, data interface{}, configType ConfigType) error {
+	// 根据配置类型序列化
+	var configBytes []byte
+	var err error
+
+	switch configType {
+	case JSON:
+		configBytes, err = json.Marshal(data)
+	case YAML:
+		configBytes, err = yaml.Marshal(data)
+	case TOML:
+		var buf bytes.Buffer
+		err = toml.NewEncoder(&buf).Encode(data)
+		configBytes = buf.Bytes()
+	default:
+		return fmt.Errorf("不支持的配置类型: %s", configType)
 	}
+
+	if err != nil {
+		return fmt.Errorf("序列化配置失败: %w", err)
+	}
+
+	// 保存配置
+	_, err = client.client.Put(context.Background(), client.key, string(configBytes))
+	if err != nil {
+		return fmt.Errorf("保存ETCD配置失败: %w", err)
+	}
+
 	return nil
 }
 
-// watch 监听ETCD配置变更
-func (e *etcdClient) watch(callback func([]byte)) {
-	watchChan := e.client.Watch(e.ctx, e.config.Key)
+// watch 监听配置变更
+func (c *etcdClient) watch(callback func([]byte)) {
+	// 创建监听器
+	watcher := c.client.Watch(context.Background(), c.key)
+
+	// 在后台运行监听
 	go func() {
-		for resp := range watchChan {
-			for _, ev := range resp.Events {
-				if ev.Type == clientv3.EventTypePut {
-					callback(ev.Kv.Value)
+		for {
+			select {
+			case resp, ok := <-watcher:
+				if !ok {
+					return
+				}
+
+				// 检查客户端是否已关闭
+				c.closedMu.RLock()
+				if c.closed {
+					c.closedMu.RUnlock()
+					return
+				}
+				c.closedMu.RUnlock()
+
+				// 处理事件
+				for _, ev := range resp.Events {
+					if ev.Type == clientv3.EventTypePut {
+						callback(ev.Kv.Value)
+					}
 				}
 			}
 		}
 	}()
+}
+
+// close 关闭客户端
+func (c *etcdClient) close() {
+	// 设置关闭标志
+	c.closedMu.Lock()
+	c.closed = true
+	c.closedMu.Unlock()
+
+	// 关闭客户端
+	if c.client != nil {
+		c.client.Close()
+	}
 }
 
 // loadTLSConfig 加载TLS配置
@@ -148,63 +198,4 @@ func loadTLSConfig(config *TLSConfig) (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
 	}, nil
-}
-
-// saveConfigToETCD 保存配置到ETCD
-func saveConfigToETCD[T any](client *etcdClient, data T, configType ConfigType) error {
-	var (
-		configBytes []byte
-		err         error
-	)
-
-	// 根据配置类型选择序列化方式
-	switch configType {
-	case JSON:
-		configBytes, err = json.Marshal(data)
-	case YAML:
-		configBytes, err = yaml.Marshal(data)
-	case TOML:
-		var buf bytes.Buffer
-		err = toml.NewEncoder(&buf).Encode(data)
-		configBytes = buf.Bytes()
-	default: // 默认使用 JSON
-		configBytes, err = json.Marshal(data)
-	}
-
-	if err != nil {
-		return fmt.Errorf("序列化配置失败: %w", err)
-	}
-
-	// 保存到ETCD
-	return client.put(configBytes)
-}
-
-// loadConfigFromETCD 从ETCD加载配置
-func loadConfigFromETCD[T any](client *etcdClient, data *T, configType ConfigType) (exists bool, err error) {
-	// 从ETCD获取配置
-	configBytes, err := client.get()
-	if err != nil {
-		return false, fmt.Errorf("从ETCD获取配置失败: %w", err)
-	}
-
-	// 如果配置不存在，返回nil
-	if configBytes == nil {
-		return false, nil
-	}
-
-	// 根据配置类型选择反序列化方式
-	switch configType {
-	case YAML:
-		err = yaml.Unmarshal(configBytes, data)
-	case TOML:
-		err = toml.Unmarshal(configBytes, data)
-	default: // 默认使用 JSON
-		err = json.Unmarshal(configBytes, data)
-	}
-
-	if err != nil {
-		return false, fmt.Errorf("反序列化配置失败: %w", err)
-	}
-
-	return true, nil
 }

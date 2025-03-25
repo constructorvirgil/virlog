@@ -50,8 +50,8 @@ type Config[T any] struct {
 	oldData T
 	// viper实例
 	v *viper.Viper
-	// 配置文件路径
-	configFile string
+	// 配置文件路径列表
+	configFiles []string
 	// 配置文件类型
 	configType ConfigType
 	// 是否启用环境变量
@@ -70,10 +70,10 @@ type Config[T any] struct {
 	closed bool
 	// 保护closed字段的互斥锁
 	closedMu sync.RWMutex
-	// ETCD配置
-	etcdConfig *ETCDConfig
-	// ETCD客户端
-	etcdClient *etcdClient
+	// ETCD配置列表
+	etcdConfigs []*ETCDConfig
+	// ETCD客户端列表
+	etcdClients []*etcdClient
 	// 是否仅使用环境变量
 	envOnly bool
 }
@@ -173,8 +173,10 @@ func (c *Config[T]) watchConfig() {
 	}()
 
 	// 开始监听配置文件
-	if err := watcher.Add(c.configFile); err != nil {
-		fmt.Printf("添加文件监听失败: %v\n", err)
+	for _, configFile := range c.configFiles {
+		if err := watcher.Add(configFile); err != nil {
+			fmt.Printf("添加文件监听失败: %v\n", err)
+		}
 	}
 }
 
@@ -195,11 +197,11 @@ func NewConfig[T any](defaultConfig T, options ...ConfigOption[T]) (*Config[T], 
 	}
 
 	// 检查配置源
-	if config.configFile != "" && config.etcdConfig != nil {
+	if len(config.configFiles) > 0 && len(config.etcdConfigs) > 0 {
 		return nil, fmt.Errorf("不能同时使用配置文件和ETCD")
 	}
 
-	if config.configFile == "" && config.etcdConfig == nil && !config.envOnly { //默认使用环境变量
+	if len(config.configFiles) == 0 && len(config.etcdConfigs) == 0 && !config.envOnly { //默认使用环境变量
 		config.envOnly = true
 	}
 
@@ -209,14 +211,14 @@ func NewConfig[T any](defaultConfig T, options ...ConfigOption[T]) (*Config[T], 
 		if err := config.initWithEnv(); err != nil {
 			return nil, err
 		}
-	} else if config.configFile != "" {
+	} else if len(config.configFiles) > 0 {
 		// 使用配置文件
-		if err := config.initWithFile(); err != nil {
+		if err := config.initWithFiles(); err != nil {
 			return nil, err
 		}
 	} else {
 		// 使用ETCD
-		if err := config.initWithETCD(); err != nil {
+		if err := config.initWithETCDs(); err != nil {
 			return nil, err
 		}
 	}
@@ -224,53 +226,72 @@ func NewConfig[T any](defaultConfig T, options ...ConfigOption[T]) (*Config[T], 
 	return config, nil
 }
 
-// initWithFile 使用配置文件初始化
-func (c *Config[T]) initWithFile() error {
+// initWithFiles 使用配置文件初始化
+func (c *Config[T]) initWithFiles() error {
 	// 设置配置文件类型
 	c.v.SetConfigType(string(c.configType))
 
-	// 设置配置文件
-	configDir := filepath.Dir(c.configFile)
-	configName := filepath.Base(c.configFile)
-	// 去掉扩展名
-	ext := filepath.Ext(configName)
-	if ext != "" {
-		configName = configName[:len(configName)-len(ext)]
-		// 如果没有指定配置类型，根据扩展名推断
-		if c.configType == "" {
-			switch strings.ToLower(ext[1:]) {
-			case "json":
-				c.configType = JSON
-			case "yaml", "yml":
-				c.configType = YAML
-			case "toml":
-				c.configType = TOML
-			default:
-				return fmt.Errorf("不支持的配置文件类型: %s", ext)
-			}
-			c.v.SetConfigType(string(c.configType))
-		}
-	}
-
-	// 如果配置文件目录不存在，创建目录
-	if _, err := os.Stat(configDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			return fmt.Errorf("创建配置目录失败: %w", err)
-		}
-	}
-
-	c.v.AddConfigPath(configDir)
-	c.v.SetConfigName(configName)
-
-	// 检查配置文件是否存在
-	configExists := true
-	if _, err := os.Stat(c.configFile); os.IsNotExist(err) {
-		configExists = false
-	}
-
-	// 首先将默认配置加载到viper中
+	// 先将默认配置加载到viper中
 	if err := c.bindStruct(c.data); err != nil {
 		return fmt.Errorf("绑定默认配置失败: %w", err)
+	}
+
+	// 遍历所有配置文件
+	for _, configFile := range c.configFiles {
+		// 设置配置文件
+		configDir := filepath.Dir(configFile)
+		configName := filepath.Base(configFile)
+		// 去掉扩展名
+		ext := filepath.Ext(configName)
+		if ext != "" {
+			configName = configName[:len(configName)-len(ext)]
+			// 如果没有指定配置类型，根据扩展名推断
+			if c.configType == "" {
+				switch strings.ToLower(ext[1:]) {
+				case "json":
+					c.configType = JSON
+				case "yaml", "yml":
+					c.configType = YAML
+				case "toml":
+					c.configType = TOML
+				default:
+					return fmt.Errorf("不支持的配置文件类型: %s", ext)
+				}
+				c.v.SetConfigType(string(c.configType))
+			}
+		}
+
+		// 如果配置文件目录不存在，创建目录
+		if _, err := os.Stat(configDir); os.IsNotExist(err) {
+			if err := os.MkdirAll(configDir, 0755); err != nil {
+				return fmt.Errorf("创建配置目录失败: %w", err)
+			}
+		}
+
+		// 创建临时viper实例
+		tempViper := viper.New()
+		tempViper.SetConfigType(string(c.configType))
+		tempViper.AddConfigPath(configDir)
+		tempViper.SetConfigName(configName)
+
+		// 检查配置文件是否存在
+		if _, err := os.Stat(configFile); os.IsNotExist(err) {
+			// 如果配置文件不存在，则创建
+			if err := tempViper.WriteConfigAs(configFile); err != nil {
+				return fmt.Errorf("创建默认配置文件失败: %w", err)
+			}
+		}
+
+		// 读取配置文件
+		if err := tempViper.ReadInConfig(); err != nil {
+			return fmt.Errorf("读取配置文件失败: %w", err)
+		}
+
+		// 合并配置
+		allSettings := tempViper.AllSettings()
+		for k, v := range allSettings {
+			c.v.Set(k, v)
+		}
 	}
 
 	// 设置环境变量覆盖
@@ -303,18 +324,6 @@ func (c *Config[T]) initWithFile() error {
 		}
 	}
 
-	// 如果配置文件不存在，则创建
-	if !configExists {
-		if err := c.v.WriteConfigAs(c.configFile); err != nil {
-			return fmt.Errorf("创建默认配置文件失败: %w", err)
-		}
-	} else {
-		// 配置文件存在，加载已有配置
-		if err := c.loadFromFile(); err != nil {
-			return err
-		}
-	}
-
 	// 将配置解析到结构体
 	if err := c.v.Unmarshal(&c.data); err != nil {
 		return fmt.Errorf("解析配置到结构体失败: %w", err)
@@ -326,94 +335,106 @@ func (c *Config[T]) initWithFile() error {
 	return nil
 }
 
-// initWithETCD 使用ETCD初始化
-func (c *Config[T]) initWithETCD() error {
+// initWithETCDs 使用ETCD初始化
+func (c *Config[T]) initWithETCDs() error {
 	// 创建ETCD客户端
-	client, err := newETCDClient(c.etcdConfig)
-	if err != nil {
-		return fmt.Errorf("创建ETCD客户端失败: %w", err)
+	clients := make([]*etcdClient, len(c.etcdConfigs))
+	for i, etcdConfig := range c.etcdConfigs {
+		client, err := newETCDClient(etcdConfig)
+		if err != nil {
+			return fmt.Errorf("创建ETCD客户端失败: %w", err)
+		}
+		clients[i] = client
 	}
-	c.etcdClient = client
+	c.etcdClients = clients
 
 	// 从ETCD加载配置
-	exists, err := loadConfigFromETCD(c.etcdClient, &c.data, c.configType)
-	if err != nil {
-		return fmt.Errorf("从ETCD加载配置失败: %w", err)
+	exists := true
+	for i, client := range c.etcdClients {
+		exists, err := loadConfigFromETCD(client, &c.data, c.configType)
+		if err != nil {
+			fmt.Printf("从ETCD加载配置失败: %v, err=%v\n", c.etcdConfigs[i].Key, err)
+			exists = false
+		}
 	}
 
 	// 如果配置不存在，则保存默认配置到ETCD
 	if !exists {
-		err := saveConfigToETCD(c.etcdClient, c.data, c.configType)
-		if err != nil {
-			return fmt.Errorf("保存默认配置到ETCD失败: %w", err)
+		for _, client := range c.etcdClients {
+			err := saveConfigToETCD(client, c.data, c.configType)
+			if err != nil {
+				return fmt.Errorf("保存默认配置到ETCD失败: %w", err)
+			}
 		}
 	}
 
 	// 监听ETCD配置变更
-	c.watchETCD()
+	c.watchETCDs()
 
 	return nil
 }
 
-// watchETCD 监听ETCD配置变更
-func (c *Config[T]) watchETCD() {
-	c.etcdClient.watch(func(data []byte) {
-		// 检查配置是否已关闭
-		c.closedMu.RLock()
-		if c.closed {
-			c.closedMu.RUnlock()
-			return
-		}
-		c.closedMu.RUnlock()
-
-		// 保存旧配置
-		c.oldData = cloneConfig(c.data)
-
-		// 根据配置类型解析新配置
-		var (
-			newData T
-			err     error
-		)
-
-		switch c.configType {
-		case JSON:
-			err = json.Unmarshal(data, &newData)
-		case YAML:
-			err = yaml.Unmarshal(data, &newData)
-		case TOML:
-			err = toml.Unmarshal(data, &newData)
-		default: // 默认使用 YAML
-			err = yaml.Unmarshal(data, &newData)
-		}
-
-		if err != nil {
-			fmt.Printf("解析ETCD配置失败: configType=%s, data=%v, err=%v\n", c.configType, string(data), err)
-			return
-		}
-
-		// 更新配置
-		c.data = newData
-
-		// 查找配置变更项
-		changedItems := findConfigChanges(c.oldData, c.data, "")
-
-		// 触发回调
-		c.callbackMu.RLock()
-		defer c.callbackMu.RUnlock()
-		for _, callback := range c.changeCallbacks {
-			if callback != nil {
-				callback(fsnotify.Event{
-					Name: c.etcdConfig.Key,
-					Op:   fsnotify.Write,
-				}, changedItems)
+// watchETCDs 监听ETCD配置变更
+func (c *Config[T]) watchETCDs() {
+	for i, client := range c.etcdClients {
+		client.watch(func(data []byte) {
+			// 检查配置是否已关闭
+			c.closedMu.RLock()
+			if c.closed {
+				c.closedMu.RUnlock()
+				return
 			}
-		}
-	})
+			c.closedMu.RUnlock()
+
+			// 保存旧配置
+			c.oldData = cloneConfig(c.data)
+
+			// 根据配置类型解析新配置
+			var (
+				newData T
+				err     error
+			)
+
+			switch c.configType {
+			case JSON:
+				err = json.Unmarshal(data, &newData)
+			case YAML:
+				err = yaml.Unmarshal(data, &newData)
+			case TOML:
+				err = toml.Unmarshal(data, &newData)
+			default: // 默认使用 YAML
+				err = yaml.Unmarshal(data, &newData)
+			}
+
+			if err != nil {
+				fmt.Printf("解析ETCD配置失败: configType=%s, data=%v, err=%v\n", c.configType, string(data), err)
+				return
+			}
+
+			// 更新配置
+			c.data = newData
+
+			// 查找配置变更项
+			changedItems := findConfigChanges(c.oldData, c.data, c.configFiles[i])
+
+			// 触发回调
+			c.callbackMu.RLock()
+			defer c.callbackMu.RUnlock()
+			for _, callback := range c.changeCallbacks {
+				if callback != nil {
+					callback(fsnotify.Event{
+						Name: c.etcdConfigs[i].Key,
+						Op:   fsnotify.Write,
+					}, changedItems)
+				}
+			}
+		})
+	}
 }
 
 // loadFromFile 从文件加载配置
 func (c *Config[T]) loadFromFile() error {
-	fileBytes, err := os.ReadFile(c.configFile)
+	fileBytes, err := os.ReadFile(c.configFiles[0])
 	if err != nil {
 		return fmt.Errorf("读取配置文件失败: %w", err)
 	}
@@ -495,18 +516,18 @@ func (c *Config[T]) SaveConfig() error {
 	var err error
 	switch c.configType {
 	case YAML:
-		err = c.v.WriteConfigAs(c.configFile)
+		err = c.v.WriteConfigAs(c.configFiles[0])
 	case JSON:
 		jsonBytes, e := json.MarshalIndent(c.data, "", "  ")
 		if e != nil {
 			return fmt.Errorf("序列化JSON失败: %w", e)
 		}
-		err = os.WriteFile(c.configFile, jsonBytes, 0644)
+		err = os.WriteFile(c.configFiles[0], jsonBytes, 0644)
 	case TOML:
 		// 使用专门的TOML编码器
 		var buf bytes.Buffer
 		err = toml.NewEncoder(&buf).Encode(c.data)
-		err = os.WriteFile(c.configFile, buf.Bytes(), 0644)
+		err = os.WriteFile(c.configFiles[0], buf.Bytes(), 0644)
 	default:
 		err = fmt.Errorf("不支持的配置类型: %s", c.configType)
 	}
@@ -531,10 +552,10 @@ func (c *Config[T]) GetData() T {
 // Update 更新配置数据并保存
 func (c *Config[T]) Update(data T) error {
 	// 根据配置源保存
-	if c.configFile != "" {
+	if len(c.configFiles) > 0 {
 		return c.SaveConfig()
-	} else if c.etcdClient != nil {
-		return saveConfigToETCD(c.etcdClient, data, c.configType)
+	} else if len(c.etcdClients) > 0 {
+		return saveConfigToETCDs(c.etcdClients, data, c.configType)
 	} else if c.envOnly {
 		// 保存旧配置用于比较
 		c.oldData = cloneConfig(c.data)
@@ -573,10 +594,10 @@ func (c *Config[T]) Close() {
 	c.callbackMu.Unlock()
 
 	// 关闭ETCD客户端
-	if c.etcdClient != nil {
-		c.etcdClient.close()
-		c.etcdClient = nil
+	for _, client := range c.etcdClients {
+		client.close()
 	}
+	c.etcdClients = nil
 
 	// 释放其他资源
 	c.v = nil
@@ -636,5 +657,15 @@ func (c *Config[T]) initWithEnv() error {
 		return fmt.Errorf("解析配置到结构体失败: %w", err)
 	}
 
+	return nil
+}
+
+// saveConfigToETCDs 保存配置到多个ETCD
+func saveConfigToETCDs(clients []*etcdClient, data interface{}, configType ConfigType) error {
+	for _, client := range clients {
+		if err := saveConfigToETCD(client, data, configType); err != nil {
+			return err
+		}
+	}
 	return nil
 }
