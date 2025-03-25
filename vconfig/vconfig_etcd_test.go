@@ -9,7 +9,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // 测试ETCD基本功能
@@ -30,7 +29,7 @@ func TestETCDConfig(t *testing.T) {
 
 	// 创建配置实例
 	cfg, err := NewConfig(defaultConfig,
-		WithETCDConfig[AppConfig](etcdConfig))
+		WithETCD[AppConfig](etcdConfig))
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
@@ -47,7 +46,7 @@ func TestETCDConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	// 重新创建配置实例
-	newCfg, err := NewConfig(AppConfig{}, WithETCDConfig[AppConfig](etcdConfig))
+	newCfg, err := NewConfig(AppConfig{}, WithETCD[AppConfig](etcdConfig))
 	require.NoError(t, err)
 	defer newCfg.Close()
 
@@ -71,7 +70,7 @@ func TestETCDConfigChangeCallback(t *testing.T) {
 	defaultConfig := newDefaultConfig()
 
 	// 创建配置实例
-	cfg, err := NewConfig(defaultConfig, WithETCDConfig[AppConfig](etcdConfig))
+	cfg, err := NewConfig(defaultConfig, WithETCD[AppConfig](etcdConfig))
 	require.NoError(t, err)
 	defer cfg.Close()
 
@@ -119,12 +118,8 @@ func TestETCDConfigChangeCallback(t *testing.T) {
 	defer client.close()
 
 	// 获取ETCD中的配置数据
-	data, err := client.get()
-	require.NoError(t, err)
-
-	// 解析ETCD中的配置
 	var remoteETCDConfig AppConfig
-	err = yaml.Unmarshal(data, &remoteETCDConfig)
+	_, err = loadConfigFromETCD(client, &remoteETCDConfig, YAML)
 	require.NoError(t, err)
 
 	// 验证ETCD中的配置与内存中的配置一致
@@ -151,7 +146,7 @@ func TestETCDAuth(t *testing.T) {
 
 	// 创建配置实例
 	cfg, err := NewConfig(newDefaultConfig(),
-		WithETCDConfig[AppConfig](etcdConfig))
+		WithETCD[AppConfig](etcdConfig))
 
 	// 如果ETCD没有启用认证，这里会失败
 	if err != nil {
@@ -176,7 +171,7 @@ func TestConfigSourceConflict(t *testing.T) {
 	// 尝试同时使用配置文件和ETCD
 	_, err := NewConfig(newDefaultConfig(),
 		WithConfigFile[AppConfig](configFile),
-		WithETCDConfig[AppConfig](etcdConfig))
+		WithETCD[AppConfig](etcdConfig))
 
 	// 应该返回错误
 	assert.Error(t, err)
@@ -204,7 +199,7 @@ func TestETCDTLS(t *testing.T) {
 
 	// 创建配置实例
 	cfg, err := NewConfig(newDefaultConfig(),
-		WithETCDConfig[AppConfig](etcdConfig))
+		WithETCD[AppConfig](etcdConfig))
 
 	// 如果没有TLS证书，这里会失败
 	if err != nil {
@@ -246,7 +241,7 @@ func TestETCDConfigWithDifferentFormats(t *testing.T) {
 
 			// 创建配置实例
 			cfg, err := NewConfig(defaultConfig,
-				WithETCDConfig[AppConfig](etcdConfig),
+				WithETCD[AppConfig](etcdConfig),
 				WithConfigType[AppConfig](tc.configType))
 			require.NoError(t, err)
 			require.NotNil(t, cfg)
@@ -265,7 +260,7 @@ func TestETCDConfigWithDifferentFormats(t *testing.T) {
 
 			// 重新创建配置实例
 			newCfg, err := NewConfig(AppConfig{},
-				WithETCDConfig[AppConfig](etcdConfig),
+				WithETCD[AppConfig](etcdConfig),
 				WithConfigType[AppConfig](tc.configType))
 			require.NoError(t, err)
 			defer newCfg.Close()
@@ -303,7 +298,7 @@ func TestETCDConfigChangeCallbackWithDifferentFormats(t *testing.T) {
 
 			// 创建配置实例
 			cfg, err := NewConfig(newDefaultConfig(),
-				WithETCDConfig[AppConfig](etcdConfig),
+				WithETCD[AppConfig](etcdConfig),
 				WithConfigType[AppConfig](tc.configType))
 			require.NoError(t, err)
 			require.NotNil(t, cfg)

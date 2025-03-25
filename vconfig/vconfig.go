@@ -351,7 +351,7 @@ func (c *Config[T]) initWithETCDs() error {
 	// 从ETCD加载配置
 	exists := true
 	for i, client := range c.etcdClients {
-		exists, err := loadConfigFromETCD(client, &c.data, c.configType)
+		_, err := loadConfigFromETCD(client, &c.data, c.configType)
 		if err != nil {
 			fmt.Printf("从ETCD加载配置失败: %v, err=%v\n", c.etcdConfigs[i].Key, err)
 			exists = false

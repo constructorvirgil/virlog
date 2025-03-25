@@ -151,6 +151,7 @@ func TestEnvVarOverride(t *testing.T) {
 			cfg, err := NewConfig(newDefaultConfig(),
 				WithConfigFile[AppConfig](configFile),
 				WithConfigType[AppConfig](tc.configType),
+				WithEnv[AppConfig](true),
 				WithEnvPrefix[AppConfig]("APP"))
 
 			require.NoError(t, err)
@@ -453,7 +454,9 @@ func TestEnvOnlyConfig(t *testing.T) {
 	}()
 
 	// 创建仅环境变量配置
-	cfg, err := NewConfig(defaultConfig, WithEnvOnly[TestConfig]("TEST"))
+	cfg, err := NewConfig(defaultConfig,
+		WithEnvOnly[TestConfig](true),
+		WithEnvPrefix[TestConfig]("TEST"))
 	if err != nil {
 		t.Fatalf("创建配置失败: %v", err)
 	}
