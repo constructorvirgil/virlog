@@ -26,6 +26,8 @@ type ETCDConfig struct {
 	Key string
 	// 超时时间
 	Timeout time.Duration
+	// TLS配置
+	TLS *TLSConfig
 }
 
 // TLSConfig TLS配置

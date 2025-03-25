@@ -70,51 +70,44 @@ func WithDebounceTime[T any](debounceTime time.Duration) ConfigOption[T] {
 	}
 }
 
-// WithETCDConfig 设置ETCD配置
-func WithETCDConfig[T any](config *ETCDConfig) ConfigOption[T] {
-	return func(c *Config[T]) {
-		c.etcdConfig = config
-	}
-}
-
 // WithETCDEndpoints 设置ETCD连接地址
 func WithETCDEndpoints[T any](endpoints ...string) ConfigOption[T] {
 	return func(c *Config[T]) {
-		if c.etcdConfig == nil {
-			c.etcdConfig = DefaultETCDConfig()
+		if len(c.etcdConfigs) == 0 {
+			c.etcdConfigs = []*ETCDConfig{DefaultETCDConfig()}
 		}
-		c.etcdConfig.Endpoints = endpoints
+		c.etcdConfigs[0].Endpoints = endpoints
 	}
 }
 
 // WithETCDAuth 设置ETCD认证信息
 func WithETCDAuth[T any](username, password string) ConfigOption[T] {
 	return func(c *Config[T]) {
-		if c.etcdConfig == nil {
-			c.etcdConfig = DefaultETCDConfig()
+		if len(c.etcdConfigs) == 0 {
+			c.etcdConfigs = []*ETCDConfig{DefaultETCDConfig()}
 		}
-		c.etcdConfig.Username = username
-		c.etcdConfig.Password = password
+		c.etcdConfigs[0].Username = username
+		c.etcdConfigs[0].Password = password
 	}
 }
 
 // WithETCDKey 设置ETCD中的配置key
 func WithETCDKey[T any](key string) ConfigOption[T] {
 	return func(c *Config[T]) {
-		if c.etcdConfig == nil {
-			c.etcdConfig = DefaultETCDConfig()
+		if len(c.etcdConfigs) == 0 {
+			c.etcdConfigs = []*ETCDConfig{DefaultETCDConfig()}
 		}
-		c.etcdConfig.Key = key
+		c.etcdConfigs[0].Key = key
 	}
 }
 
 // WithETCDTLS 设置ETCD的TLS配置
 func WithETCDTLS[T any](certFile, keyFile, caFile string) ConfigOption[T] {
 	return func(c *Config[T]) {
-		if c.etcdConfig == nil {
-			c.etcdConfig = DefaultETCDConfig()
+		if len(c.etcdConfigs) == 0 {
+			c.etcdConfigs = []*ETCDConfig{DefaultETCDConfig()}
 		}
-		c.etcdConfig.TLS = &TLSConfig{
+		c.etcdConfigs[0].TLS = &TLSConfig{
 			CertFile:      certFile,
 			KeyFile:       keyFile,
 			TrustedCAFile: caFile,
